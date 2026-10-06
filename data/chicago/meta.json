@@ -1,0 +1,28 @@
+{
+  "city": "chicago",
+  "label": "Chicago",
+  "season": "2026_27",
+  "origin": "2026-09-20",
+  "horizons": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "models": [
+    "gnn_st",
+    "lstm",
+    "colagnn"
+  ],
+  "backtest": "live/runs/chicago/backtest_20261005-235559",
+  "backtest_seasons": [
+    "2023-24",
+    "2024-25",
+    "2025-26"
+  ],
+  "issued": "2026-10-05T23:56:07",
+  "quick": false,
+  "archived_origins": [
+    "2026-09-20"
+  ]
+}

@@ -1,0 +1,3 @@
+# The app reads precomputed CSVs from data/; no model code or torch at runtime.
+shiny==1.8.0
+pandas==3.0.6

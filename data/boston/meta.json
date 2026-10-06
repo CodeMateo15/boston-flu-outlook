@@ -1,0 +1,40 @@
+{
+  "city": "boston",
+  "label": "Boston",
+  "season": "2026_27",
+  "origin": "2026-09-27",
+  "horizons": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "models": [
+    "gnn_st",
+    "lstm",
+    "colagnn"
+  ],
+  "backtest": "live/runs/boston/backtest_20261006-140634",
+  "backtest_seasons": [
+    "2023-24",
+    "2024-25",
+    "2025-26"
+  ],
+  "training": {
+    "model": "gnn_st",
+    "horizon": 1,
+    "train_targets": [
+      "2018-04-29",
+      "2025-06-22"
+    ],
+    "validation_targets": [
+      "2025-06-29",
+      "2026-09-27"
+    ]
+  },
+  "issued": "2026-10-06T14:06:43",
+  "quick": false,
+  "archived_origins": [
+    "2026-09-27"
+  ]
+}
