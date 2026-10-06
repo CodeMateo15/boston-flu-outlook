@@ -62,6 +62,16 @@ def date(d) -> str:
     return pd.Timestamp(d).strftime("%b %-d")
 
 
+def week_end(d) -> str:
+    """BPHC and CDPH label a week by its Sunday; it runs through the Saturday after."""
+    return date(pd.Timestamp(d) + pd.Timedelta(days=6))
+
+
+def week_span(d) -> str:
+    start, end = pd.Timestamp(d), pd.Timestamp(d) + pd.Timedelta(days=6)
+    return f"{date(start)}–{end.day if end.month == start.month else date(end)}"
+
+
 def map_bins(city: D.CityData) -> list[float]:
     recent = city.history.iloc[-104:].to_numpy().ravel().tolist()
     return C.bins_for(recent + city.forecast["predicted"].tolist(), city.info.get("cap"))
@@ -116,7 +126,7 @@ def preview_banner(city: D.CityData):
         return None
     return ui.div(ui.tags.b("Preview numbers."),
                   f"These {city.label} forecasts come from a quick test run (tiny models, "
-                  f"data through {date(city.origin)}), not the production run. They show "
+                  f"data through {week_end(city.origin)}), not the production run. They show "
                   "how the page works; don't quote them.", class_="banner")
 
 
@@ -136,7 +146,7 @@ def map_block(city: D.CityData, h: int, selected: str | None, input_id: str):
             r = rows[(rows["area"] == area) & (rows["horizon"] == h)]
             if len(r):
                 r = r.iloc[0]
-                lines.append(f"Forecast for {date(r['target_date'])}: {city.fmt(r['predicted'])}")
+                lines.append(f"Forecast for {week_span(r['target_date'])}: {city.fmt(r['predicted'])}")
                 lines.append(f"95% range {city.fmt(r['lower'])}–{city.fmt(r['upper'])}")
                 lines.append(f"Now: {city.fmt(latest.get(area))}")
         lvl = city.level(area, v)
@@ -275,7 +285,7 @@ def headline(city: D.CityData) -> str:
 # --- UI -------------------------------------------------------------------------------
 
 def topbar():
-    chips = [ui.span(ui.HTML(f"BPHC data through <strong>{date(B.origin)}</strong>"), class_="chip"),
+    chips = [ui.span(ui.HTML(f"BPHC data through <strong>{week_end(B.origin)}</strong>"), class_="chip"),
              ui.span(ui.HTML(f"Forecast issued <strong>{date(B.meta.get('issued', B.origin))}</strong>"),
                      class_="chip"),
              ui.span(f"{len(B.meta.get('archived_origins', [1]))} weekly forecast(s) on record",
@@ -454,7 +464,7 @@ def server(input, output, session):
             f"this neighborhood). The {D.MODEL_SHORT[models[0]].lower()} expects "
             f"<strong>{B.fmt(first['predicted'])}</strong> next week, and would be surprised "
             f"by anything outside {B.fmt(first['lower'])}–{B.fmt(first['upper'])}. "
-            f"By {date(last['target_date'])}: {B.fmt(last['predicted'])} "
+            f"For the week of {week_span(last['target_date'])}: {B.fmt(last['predicted'])} "
             f"({B.fmt(last['lower'])}–{B.fmt(last['upper'])}).")
         badges = ui.div(*[ui.span(ui.tags.b(D.MODEL_SHORT[m] + ": "),
                                   trust_badge(B.trust(m, 1)), " ")
