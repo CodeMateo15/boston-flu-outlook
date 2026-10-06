@@ -541,3 +541,9 @@ h4 { font-size: 15px; margin: 18px 0 6px; color: var(--text-secondary); }
 .chart-card .shiny-input-radiogroup .radio-inline { margin-right: 16px; font-size: 13.5px;
   color: var(--text-secondary); display: inline-flex; align-items: center; gap: 6px; }
 .chart-card .shiny-input-radiogroup input[type="radio"] { accent-color: var(--s1); }
+
+/* ---- 50% / 95% coverage marks ---- */
+.chart .ring { fill: var(--surface-1); stroke: var(--c); stroke-width: 2; }
+.legend .sw-ring, .legend .sw-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.legend .sw-ring { border: 2px solid var(--text-secondary); }
+.legend .sw-dot { background: var(--text-secondary); }

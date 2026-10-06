@@ -102,10 +102,13 @@ def legend(models: list[str], bands: bool = True, observed: bool = True):
     keys = []
     if observed:
         keys.append(ui.span(ui.span(class_="sw obs"), "Reported", class_="key"))
-    for i, m in enumerate(models):
+    # Same rule as C.fan_chart: the bands belong to the first model that is not
+    # "same as last week".
+    banded = next((m for m in models if m != "persistence"), None)
+    for m in models:
         cls = D.MODEL_CLASS.get(m, "s1")
         keys.append(ui.span(ui.span(class_=f"sw {cls}"), D.MODEL_SHORT.get(m, m), class_="key"))
-        if i == 0 and bands:
+        if m == banded and bands:
             keys.append(ui.span(ui.span(class_=f"sw-band {cls} b50"), "likely range (50%)", class_="key"))
             keys.append(ui.span(ui.span(class_=f"sw-band {cls} b95"), "plausible range (95%)", class_="key"))
     return ui.div(*keys, class_="legend")
@@ -452,20 +455,29 @@ def server(input, output, session):
         if area not in B.areas:
             area = B.areas[0]
         models = [m for m in (input.models() or [D.PRIMARY]) if m in B.models] or [D.PRIMARY]
-        # Bands go to the graph model when it is shown, so they mean the same thing everywhere.
-        models = sorted(models, key=lambda m: m != D.PRIMARY)
+        # Bands go to the graph model when it is shown, so they mean the same thing
+        # everywhere; "same as last week" goes last, since it has no range.
+        models = sorted(models, key=lambda m: (m == "persistence", m != D.PRIMARY))
         rows = B.rows(models[0], area)
         now = B.latest()[area]
         first, last = rows.iloc[0], rows.iloc[-1]
         lvl_now = B.level(area, now)
-        sentence = (
+        reported = (
             f"In <strong>{short(B, area)}</strong>, {B.fmt(now)} {B.info['unit_short']} were "
-            f"reported for the week of {date(B.origin)} ({(lvl_now or 'unrated').lower()} for "
-            f"this neighborhood). The {D.MODEL_SHORT[models[0]].lower()} expects "
-            f"<strong>{B.fmt(first['predicted'])}</strong> next week, and would be surprised "
-            f"by anything outside {B.fmt(first['lower'])}–{B.fmt(first['upper'])}. "
-            f"For the week of {week_span(last['target_date'])}: {B.fmt(last['predicted'])} "
-            f"({B.fmt(last['lower'])}–{B.fmt(last['upper'])}).")
+            f"reported for the week of {week_span(B.origin)} ({(lvl_now or 'unrated').lower()} "
+            f"for this neighborhood). ")
+        if models[0] == "persistence":
+            sentence = reported + (
+                "“Same as last week” carries that number forward unchanged to every week "
+                "ahead. It is not a forecast: it is the yardstick the models are scored "
+                "against, so it has no range. Tick a model to see a forecast.")
+        else:
+            sentence = reported + (
+                f"The {D.MODEL_SHORT[models[0]].lower()} expects "
+                f"<strong>{B.fmt(first['predicted'])}</strong> next week, and would be "
+                f"surprised by anything outside {B.fmt(first['lower'])}–{B.fmt(first['upper'])}. "
+                f"For the week of {week_span(last['target_date'])}: {B.fmt(last['predicted'])} "
+                f"({B.fmt(last['lower'])}–{B.fmt(last['upper'])}).")
         badges = ui.div(*[ui.span(ui.tags.b(D.MODEL_SHORT[m] + ": "),
                                   trust_badge(B.trust(m, 1)), " ")
                           for m in models if m != "persistence"],
@@ -629,8 +641,11 @@ def record_body(city: D.CityData, m: str):
                             f"p(Holm) {r['p_holm']:.3f}", class_="note") if m == "analyst" else None)
             cells.append(ui.tags.td(ui.div(text), trust_badge(r["verdict"]), extra))
         body.append(ui.tags.tr(*cells))
-    cover = (city.bt_scores[city.bt_scores["model"].isin(city.models)]
-             .groupby(["model", "horizon"])["coverage95"].mean().reset_index())
+    # "Same as last week" is shown without a range, so its coverage is left out too.
+    cols = [c for c in ("coverage95", "coverage50") if c in city.bt_scores]
+    shown = [mm for mm in city.models if mm != "persistence"]
+    cover = (city.bt_scores[city.bt_scores["model"].isin(shown)]
+             .groupby(["model", "horizon"])[cols].mean().reset_index())
     return ui.div(
         preview_banner(city),
         ui.h2("Would these forecasts have worked before?"),
@@ -647,10 +662,15 @@ def record_body(city: D.CityData, m: str):
                ui.div(ui.tags.table(ui.tags.thead(ui.tags.tr(*header)), ui.tags.tbody(*body),
                                     class_="score-table"), class_="table-scroll"),
                class_="chart-card"),
-        ui.div(ui.h3("When it says “95% range”, is it right 95% of the time?"),
-               ui.p("How often the real number landed inside each model's plausible range in "
-                    "past seasons. Near 95% is honest; far below means overconfident.",
+        ui.div(ui.h3("When it says “50% range” or “95% range”, is it right that often?"),
+               ui.p("How often the real number landed inside each model's ranges in past "
+                    "seasons. The likely range (50%) should catch it about half the time, the "
+                    "plausible range (95%) about 19 times in 20. Well below the target means "
+                    "overconfident; well above means the range is wider than it needs to be.",
                     class_="blurb"),
+               ui.div(ui.span(ui.span(class_="sw-ring"), "likely range (50%)", class_="key"),
+                      ui.span(ui.span(class_="sw-dot"), "plausible range (95%)", class_="key"),
+                      class_="legend") if "coverage50" in cols else None,
                ui.HTML(C.coverage_dots(cover)), class_="chart-card"),
         live_block(city),
     )
@@ -667,8 +687,11 @@ def live_block(city: D.CityData):
             f"scored once BPHC reports the week of {date(first)}. This section then fills in "
             f"week by week: a prospective record nobody can tune after the fact.",
             class_="empty"), class_="chart-card")
+    if "covered50" not in done:  # scored before the 50% range was recorded
+        done = done.assign(covered50=np.nan)
     summary = done.groupby(["horizon", "model"]).agg(
-        weeks=("origin_date", "nunique"), wis=("wis", "mean"), cover=("covered95", "mean")).reset_index()
+        weeks=("origin_date", "nunique"), wis=("wis", "mean"), cover=("covered95", "mean"),
+        cover50=("covered50", "mean")).reset_index()
     ref = summary[summary["model"] == "persistence"].set_index("horizon")["wis"]
     rows = []
     for r in summary[summary["model"] != "persistence"].itertuples():
@@ -676,13 +699,14 @@ def live_block(city: D.CityData):
         rows.append(ui.tags.tr(ui.tags.td(D.MODEL_SHORT.get(r.model, r.model)), ui.tags.td(r.horizon),
                                ui.tags.td(r.weeks),
                                ui.tags.td(f"{(1 - rel) * 100:+.0f}%" if np.isfinite(rel) else "—"),
+                               ui.tags.td(f"{r.cover50 * 100:.0f}%" if np.isfinite(r.cover50) else "—"),
                                ui.tags.td(f"{r.cover * 100:.0f}%")))
     return ui.div(title, ui.p("Archived forecasts that have now met the real numbers.",
                               class_="blurb"),
                   ui.div(ui.tags.table(ui.tags.thead(ui.tags.tr(
                       *[ui.tags.th(t) for t in ("Model", "Weeks ahead", "Weeks scored",
                                                 "Closer than “same as last week”",
-                                                "Inside 95% range")])),
+                                                "Inside 50% range", "Inside 95% range")])),
                       ui.tags.tbody(*rows), class_="score-table"), class_="table-scroll"),
                   class_="chart-card")
 

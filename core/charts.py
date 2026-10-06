@@ -89,14 +89,17 @@ def _band(fr: Frame, dates, lo, hi) -> str:
 def fan_chart(history: pd.Series, forecasts: dict[str, pd.DataFrame], *, unit: str, fmt,
               weeks: int = 20, width: int = 760, height: int = 300, cap: float | None = None) -> str:
     """Observed weeks, then each model's median for 1-4 weeks ahead. The first model
-    in `forecasts` gets the 50% and 95% bands; the others are lines only, so the
-    bands never pile up."""
+    in `forecasts` other than "same as last week" gets the 50% and 95% bands; the
+    others are lines only, so the bands never pile up. "Same as last week" is a
+    yardstick (the latest week carried forward), so it never carries a range."""
     origin = history.dropna().index.max()
     hist = history.loc[:origin].iloc[-weeks:]
     last = hist.dropna().iloc[-1]
     ends = [f["target_date"].max() for f in forecasts.values() if len(f)]
     x1 = max(ends) if ends else origin
-    top = max([hist.max()] + [f["upper"].max() for f in forecasts.values() if len(f)])
+    banded = next((m for m, f in forecasts.items() if m != "persistence" and len(f)), None)
+    top = max([hist.max()] + [(f["upper"] if m == banded else f["predicted"]).max()
+                              for m, f in forecasts.items() if len(f)])
     if cap:
         top = min(max(top, 1), cap)
     fr = Frame(width, height, hist.index.min(), x1, top * 1.05)
@@ -105,12 +108,12 @@ def fan_chart(history: pd.Series, forecasts: dict[str, pd.DataFrame], *, unit: s
     out.append(f'<line class="today" x1="{fr.x(origin):.1f}" x2="{fr.x(origin):.1f}" y1="{fr.t}" '
                f'y2="{fr.y(0):.1f}"/><text class="today-label" x="{fr.x(origin) + 4:.1f}" '
                f'y="{fr.t + 10}">latest data</text>')
-    for i, (model, f) in enumerate(forecasts.items()):
+    for model, f in forecasts.items():
         if not len(f):
             continue
         cls = MODEL_CLASS.get(model, "s1")
         dates = [origin] + list(f["target_date"])
-        if i == 0:
+        if model == banded:
             out.append(f'<path class="band95 {cls}" d="{_band(fr, dates, [last] + list(f["lower"]), [last] + list(f["upper"]))}"/>')
             out.append(f'<path class="band50 {cls}" d="{_band(fr, dates, [last] + list(f["q0.250"]), [last] + list(f["q0.750"]))}"/>')
         med = [(fr.x(d), fr.y(v)) for d, v in zip(dates, [last] + list(f["predicted"]))]
@@ -132,8 +135,9 @@ def fan_chart(history: pd.Series, forecasts: dict[str, pd.DataFrame], *, unit: s
             row = f[f["target_date"] == d]
             if len(row):
                 r = row.iloc[0]
-                lines.append(f"{MODEL_SHORT.get(model, model)}: {fmt(r['predicted'])} "
-                             f"(95%: {fmt(r['lower'])}–{fmt(r['upper'])})")
+                lines.append(f"{MODEL_SHORT.get(model, model)}: {fmt(r['predicted'])}"
+                             + ("" if model == "persistence"
+                                else f" (95%: {fmt(r['lower'])}–{fmt(r['upper'])})"))
         x = fr.x(d)
         out.append(f'<g class="col" data-tip="{esc(chr(10).join(lines))}">'
                    f'<rect class="hit" x="{x - step / 2:.1f}" y="{fr.t}" width="{step:.1f}" height="{fr.y(0) - fr.t:.1f}"/>'
@@ -276,29 +280,41 @@ def network(geo: dict, edges: list[tuple[str, str]], short: dict[str, str]) -> s
 
 # --- track record ---------------------------------------------------------------------------
 
-def coverage_dots(table: pd.DataFrame, width=520, height=None) -> str:
-    """How often the truth fell inside the 95% band, per model and horizon.
-    Rows are model x horizon; the reference line marks 95%."""
+def coverage_dots(table: pd.DataFrame, width=560, height=None) -> str:
+    """How often the truth fell inside the 50% and the 95% range, per model and
+    horizon. A hollow ring marks the 50% range, a filled dot the 95% range; each
+    has its own target line. Rows are model x horizon."""
     rows = table.sort_values(["model", "horizon"])
+    has50 = "coverage50" in rows and rows["coverage50"].notna().any()
     height = height or 30 + 22 * len(rows)
-    l, r = 200, 40
-    X = lambda p: l + (p - 50) / 50 * (width - l - r)
+    l, r = 200, 24
+    lo = 25 if has50 else 50
+    X = lambda p: l + (min(max(p, lo), 100) - lo) / (100 - lo) * (width - l - r)
     out = [f'<svg class="chart dots" viewBox="0 0 {width} {height}" role="img" '
-           f'aria-label="Coverage of the 95% range">']
-    for p in (50, 75, 100):
-        out.append(f'<line class="grid" x1="{X(p):.1f}" x2="{X(p):.1f}" y1="10" y2="{height - 18}"/>'
+           f'aria-label="How often the truth fell inside the 50% and 95% ranges">']
+    for p in range(lo, 101, 25):
+        out.append(f'<line class="grid" x1="{X(p):.1f}" x2="{X(p):.1f}" y1="14" y2="{height - 18}"/>'
                    f'<text class="tick" x="{X(p):.1f}" y="{height - 4}" text-anchor="middle">{p}%</text>')
-    out.append(f'<line class="target" x1="{X(95):.1f}" x2="{X(95):.1f}" y1="10" y2="{height - 18}"/>'
-               f'<text class="tick" x="{X(95):.1f}" y="9" text-anchor="middle">target 95%</text>')
+    for target in ((50, 95) if has50 else (95,)):
+        out.append(f'<line class="target" x1="{X(target):.1f}" x2="{X(target):.1f}" y1="14" '
+                   f'y2="{height - 18}"/><text class="tick" x="{X(target):.1f}" y="10" '
+                   f'text-anchor="middle">target {target}%</text>')
     for i, row in enumerate(rows.itertuples()):
-        y = 24 + i * 22
-        pct = 100 * row.coverage95
+        y = 26 + i * 22
+        name = MODEL_SHORT.get(row.model, row.model)
+        cls = MODEL_CLASS.get(row.model, "s1")
+        p95 = 100 * row.coverage95
+        p50 = 100 * row.coverage50 if has50 and np.isfinite(row.coverage50) else None
+        tip = f"{name}, {row.horizon} week(s) ahead&#10;Inside the 95% range {p95:.0f}% of the time"
+        if p50 is not None:
+            tip += f"&#10;Inside the 50% range {p50:.0f}% of the time"
         out.append(f'<text class="row-label" x="{l - 10}" y="{y + 4}" text-anchor="end">'
-                   f'{esc(MODEL_SHORT.get(row.model, row.model))}, {row.horizon} wk</text>')
-        out.append(f'<g data-tip="{esc(MODEL_SHORT.get(row.model, row.model))}, {row.horizon} week(s) ahead&#10;'
-                   f'Truth inside the 95% range {pct:.0f}% of the time">'
-                   f'<rect class="hit" x="{l}" y="{y - 10}" width="{width - l - r}" height="20"/>'
-                   f'<circle class="dot {MODEL_CLASS.get(row.model, "s1")}" cx="{X(max(50, pct)):.1f}" cy="{y}" r="5"/></g>')
+                   f'{esc(name)}, {row.horizon} wk</text>')
+        out.append(f'<g data-tip="{tip}"><rect class="hit" x="{l}" y="{y - 10}" '
+                   f'width="{width - l - r}" height="20"/>')
+        if p50 is not None:
+            out.append(f'<circle class="ring {cls}" cx="{X(p50):.1f}" cy="{y}" r="5"/>')
+        out.append(f'<circle class="dot {cls}" cx="{X(p95):.1f}" cy="{y}" r="5"/></g>')
     out.append("</svg>")
     return "".join(out)
 
