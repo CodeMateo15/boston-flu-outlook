@@ -2,7 +2,7 @@
   "city": "boston",
   "label": "Boston",
   "season": "2026_27",
-  "origin": "2026-09-27",
+  "origin": "2026-10-04",
   "horizons": [
     1,
     2,
@@ -12,9 +12,10 @@
   "models": [
     "gnn_st",
     "lstm",
-    "colagnn"
+    "colagnn",
+    "arima"
   ],
-  "backtest": "live/runs/boston/backtest_20261006-140634",
+  "backtest": "live/runs/boston/backtest_20261013-arima",
   "backtest_seasons": [
     "2023-24",
     "2024-25",
@@ -25,16 +26,17 @@
     "horizon": 1,
     "train_targets": [
       "2018-04-29",
-      "2025-06-22"
+      "2025-06-29"
     ],
     "validation_targets": [
-      "2025-06-29",
-      "2026-09-27"
+      "2025-07-06",
+      "2026-10-04"
     ]
   },
-  "issued": "2026-10-06T14:06:43",
+  "issued": "2026-10-14T01:36:21",
   "quick": false,
   "archived_origins": [
-    "2026-09-27"
+    "2026-09-27",
+    "2026-10-04"
   ]
 }

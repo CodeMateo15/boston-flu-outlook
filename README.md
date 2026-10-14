@@ -16,7 +16,7 @@ Built in Shiny for Python for the Boston Public Health Commission.
 | Track record | Would these forecasts have worked in past seasons, and are the 95% ranges honest? Plus the live 2026-27 scorecard |
 | Chicago | The same pipeline on Chicago's ZIP-level data, and both cities against their own typical peak |
 | Forecast table | (Analyst view) every number, filterable |
-| How it works | The neighborhood network, data sources, caveats, and CSV / FluSight downloads |
+| How it works | The neighborhood network, how long each model takes to run, data sources, caveats, and CSV / FluSight downloads |
 
 The "I am viewing as" selector switches between a plain-language briefing and an
 analyst view that adds the scores behind each verdict.
@@ -47,6 +47,10 @@ The app only reads `data/`. Each week, after the live forecast has run
 ```bash
 python publish.py          # copies the newest archived forecast per city into data/
 ```
+
+`live_forecast.py` times every model as it runs and saves `runtime.csv` in each
+archived forecast; `publish.py` gathers them into `data/<city>/runtimes.csv` for
+the How it works tab.
 
 then commit `data/` and push; Connect Cloud redeploys from the repo. A forecast made
 with smoke-test settings carries `"quick": true` in its metadata, and the app shows

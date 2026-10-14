@@ -72,6 +72,19 @@ def week_span(d) -> str:
     return f"{date(start)}–{end.day if end.month == start.month else date(end)}"
 
 
+def duration(seconds: float) -> str:
+    if not np.isfinite(seconds):
+        return "—"
+    seconds = round(seconds)
+    if seconds < 60:
+        return f"{max(seconds, 1)} s"
+    minutes, seconds = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes} min {seconds} s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours} h {minutes} min"
+
+
 def map_bins(city: D.CityData) -> list[float]:
     recent = city.history.iloc[-104:].to_numpy().ravel().tolist()
     return C.bins_for(recent + city.forecast["predicted"].tolist(), city.info.get("cap"))
@@ -711,6 +724,44 @@ def live_block(city: D.CityData):
                   class_="chart-card")
 
 
+def runtime_block(city: D.CityData):
+    """Wall-clock time per model for each weekly forecast: training plus forecasting
+    all four weeks ahead. Recorded since the 2026-10-04 forecast."""
+    rt = city.runtimes
+    if rt is None or rt.empty:
+        return None
+    per_run = rt.groupby(["origin", "model"])["seconds"].sum().reset_index()
+    latest = per_run["origin"].max()
+    runs = per_run["origin"].nunique()
+    rows = []
+    for m in city.models:
+        mine = per_run[per_run["model"] == m]
+        if m == "persistence" or mine.empty:
+            continue
+        now = mine.loc[mine["origin"] == latest, "seconds"]
+        cfg = rt[(rt["model"] == m) & (rt["origin"] == latest)].iloc[0]
+        settings = (f"{int(cfg['n_seeds'])} seeds × {int(cfg['epochs'])} epochs"
+                    if pd.notna(cfg.get("n_seeds")) and pd.notna(cfg.get("epochs"))
+                    else "fitted per neighborhood, no training passes")
+        rows.append(ui.tags.tr(ui.tags.td(D.MODEL_SHORT.get(m, m)),
+                               ui.tags.td(duration(now.sum()) if len(now) else "—"),
+                               ui.tags.td(duration(mine["seconds"].median())),
+                               ui.tags.td(settings)))
+    machines = sorted(rt.loc[rt["origin"] == latest, "machine"].dropna().unique())
+    where = f" on {', '.join(machines)}" if machines else ""
+    return ui.div(
+        ui.h3("How long each model takes"),
+        ui.p(f"Time to train each model and forecast all four weeks ahead, for the forecast "
+             f"made from data through {week_end(latest)}{where}. “Typical” is the median over "
+             + (f"the {runs} weekly forecasts timed so far. " if runs > 1 else
+                "every weekly forecast, once more weeks have been timed. ")
+             + "“Same as last week” needs no training, so it is left out.", class_="blurb"),
+        ui.div(ui.tags.table(ui.tags.thead(ui.tags.tr(
+            *[ui.tags.th(t) for t in ("Model", "This week", "Typical", "Settings")])),
+            ui.tags.tbody(*rows), class_="score-table"), class_="table-scroll"),
+        class_="chart-card")
+
+
 def how_panel():
     shorts = {a: short(B, a) for a in B.areas}
     return ui.div(
@@ -735,6 +786,7 @@ def how_panel():
                ui.p("Each line joins two neighborhoods that share a border; larger dots have "
                     "more neighbors. Hover a line or a dot.", class_="blurb"),
                ui.HTML(C.network(B.geo, B.edges, shorts)), class_="chart-card"),
+        runtime_block(B),
         ui.div(ui.h3("Data and caveats"),
                ui.tags.ul(
                    ui.tags.li(f"Boston: {B.info['source']}. Small counts are suppressed by BPHC "

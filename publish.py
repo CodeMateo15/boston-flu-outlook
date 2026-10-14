@@ -5,7 +5,8 @@
 
 Reads the frozen forecast folders that areaFluForecast's scripts/live_forecast.py
 writes (forecast.csv, rates_asof.csv, backtest_*.csv, trust.md, meta.json), plus
-the season's scores.csv once forecasts start meeting real numbers. Boundaries are
+the season's scores.csv once forecasts start meeting real numbers, and every
+archive's runtime.csv (seconds per model) gathered into runtimes.csv. Boundaries are
 projected and simplified here, once, into ready-to-draw SVG paths, so the app
 needs neither geopandas nor the raw GeoJSON at runtime.
 
@@ -192,6 +193,13 @@ def publish(city: str, folder: Path, data_folder: Path | None) -> None:
         shutil.copy(scores, out / "live_scores.csv")
     elif (out / "live_scores.csv").exists():
         (out / "live_scores.csv").unlink()
+    # How long each model took, for every archived origin that recorded it.
+    timed = [pd.read_csv(p / "runtime.csv").assign(origin=p.name)
+             for p in sorted(folder.parent.iterdir()) if (p / "runtime.csv").exists()]
+    if timed:
+        pd.concat(timed, ignore_index=True).to_csv(out / "runtimes.csv", index=False)
+    elif (out / "runtimes.csv").exists():
+        (out / "runtimes.csv").unlink()
     data_folder = data_folder or LIVE / city
     edges = pd.read_csv(data_folder / "edges.csv", dtype=str)
     areas = list(history.columns)

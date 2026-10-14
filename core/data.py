@@ -23,13 +23,14 @@ MODEL_NAMES = {
     "gnn_st": "Neighborhood graph model",
     "lstm": "LSTM (sequence model)",
     "colagnn": "Cola-GNN (graph model from the literature)",
+    "arima": "ARIMA (seasonal statistical model)",
     "persistence": "Same as last week",
 }
-MODEL_SHORT = {"gnn_st": "Graph model", "lstm": "LSTM", "colagnn": "Cola-GNN",
+MODEL_SHORT = {"gnn_st": "Graph model", "lstm": "LSTM", "colagnn": "Cola-GNN", "arima": "ARIMA",
                "persistence": "Same as last week"}
-# Colour follows the model, never its rank: categorical slots 1-3, and the
-# reference in neutral ink so it never reads as a competitor.
-MODEL_CLASS = {"gnn_st": "s1", "lstm": "s2", "colagnn": "s3", "persistence": "sref"}
+# Colour follows the model, never its rank: categorical slots 1-4 (slot 4 also
+# dashed), and the reference in neutral ink so it never reads as a competitor.
+MODEL_CLASS = {"gnn_st": "s1", "lstm": "s2", "colagnn": "s3", "arima": "s4", "persistence": "sref"}
 PRIMARY = "gnn_st"
 
 CITY_INFO = {
@@ -76,6 +77,7 @@ class CityData:
     geo: dict
     edges: list[tuple[str, str]]
     thresholds: pd.DataFrame = field(default_factory=pd.DataFrame)
+    runtimes: pd.DataFrame | None = None  # seconds per model, horizon and weekly origin
 
     # --- basics ------------------------------------------------------------
     @property
@@ -227,6 +229,8 @@ def _load(key: str) -> CityData | None:
     live = folder / "live_scores.csv"
     live_scores = (pd.read_csv(live, parse_dates=["origin_date", "target_date"], dtype={"area": str})
                    if live.exists() else None)
+    runtime = folder / "runtimes.csv"
+    runtimes = pd.read_csv(runtime) if runtime.exists() else None
     trust_notes = [line[2:].strip() for line in (folder / "trust.md").read_text().splitlines()
                    if line.startswith("- ")]
     edges = pd.read_csv(folder / "edges.csv", dtype=str)
@@ -235,7 +239,7 @@ def _load(key: str) -> CityData | None:
         comparison=pd.read_csv(folder / "backtest_comparison.csv"),
         bt_scores=pd.read_csv(folder / "backtest_scores.csv"), live_scores=live_scores,
         trust_notes=trust_notes, geo=json.loads((folder / "geo.json").read_text()),
-        edges=list(zip(edges["a"], edges["b"])))
+        edges=list(zip(edges["a"], edges["b"])), runtimes=runtimes)
     city.thresholds = _thresholds(history)
     return city
 
