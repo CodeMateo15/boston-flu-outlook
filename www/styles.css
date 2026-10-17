@@ -454,7 +454,7 @@ h4 { font-size: 15px; margin: 18px 0 6px; color: var(--text-secondary); }
 
 /* Ranked list beside the map: the table view of the same numbers. */
 .ranked { list-style: none; margin: 0; padding: 0; }
-.ranked li { display: grid; grid-template-columns: minmax(0, 1fr) 90px 54px 86px;
+.ranked li { display: grid; grid-template-columns: minmax(0, 1fr) 80px 50px 40px 82px;
              align-items: center; gap: 8px; padding: 6px 4px; border-top: 1px solid var(--border);
              cursor: pointer; font-size: 13px; }
 .ranked li:first-child { border-top: none; }
@@ -464,6 +464,13 @@ h4 { font-size: 15px; margin: 18px 0 6px; color: var(--text-secondary); }
 .ranked .bar-track { background: var(--surface-0); border-radius: 4px; height: 8px; }
 .ranked .val { text-align: right; font-variant-numeric: tabular-nums; }
 .ranked .chg { font-size: 12px; color: var(--text-muted); text-align: right; font-variant-numeric: tabular-nums; }
+.ranked .lvl { text-align: right; }
+
+/* Epigraph at the top of How it works. */
+.epigraph { margin: 0 0 16px; padding: 2px 0 2px 12px; border-left: 3px solid var(--border);
+            color: var(--text-secondary); font-size: 14px; max-width: 70ch; }
+.epigraph p { margin: 0; font-style: italic; }
+.epigraph footer { margin-top: 2px; font-size: 12px; color: var(--text-muted); }
 
 /* ---- small multiples ---- */
 .multiples { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
@@ -524,7 +531,7 @@ h4 { font-size: 15px; margin: 18px 0 6px; color: var(--text-secondary); }
 
 @media (max-width: 600px) {
   body { padding: 0 16px 40px; }
-  .ranked li { grid-template-columns: minmax(0, 1fr) 60px 50px; }
+  .ranked li { grid-template-columns: minmax(0, 1fr) 60px 50px 82px; }
   .ranked .chg { display: none; }
   .tile { min-width: 140px; flex: 1 1 140px; }
 }

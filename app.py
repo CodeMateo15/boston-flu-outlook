@@ -189,14 +189,17 @@ def ranked_block(city: D.CityData, h: int, input_id: str, limit: int | None = No
         width = 0 if not np.isfinite(v) else max(2, 100 * v / top)
         change = (v / latest[area] - 1) if h and np.isfinite(v) and latest.get(area, 0) > 0 else np.nan
         chg = "" if not np.isfinite(change) else f"{change * 100:+.0f}%"
+        lvl = city.level(area, v)
         items.append(ui.tags.li(
             ui.span(short(city, area), class_="nm"),
             ui.div(ui.div(class_="bar", style=f"width:{width:.0f}%"), class_="bar-track"),
             ui.span(city.fmt(v), class_="val"),
-            ui.span(chg or level_pill(city.level(area, v)), class_="chg"),
+            ui.span(chg, class_="chg"),
+            ui.span(level_pill(lvl), class_="lvl"),
             **{"data-area": area, "data-input": input_id, "tabindex": "0",
                "data-tip": f"{short(city, area)}\n{city.fmt(v)} {city.info['unit_short']}"
-                           + (f"\n{chg} vs now" if chg else "")}))
+                           + (f"\n{chg} vs now" if chg else "")
+                           + (f"\nLevel: {lvl}" if lvl else "")}))
     more = (ui.p(f"Top {limit} of {len(order)} shown; the map has them all.", class_="note")
             if limit and len(order) > limit else None)
     return ui.div(ui.tags.ul(*items, class_="ranked"), more)
@@ -705,10 +708,16 @@ def live_block(city: D.CityData):
     summary = done.groupby(["horizon", "model"]).agg(
         weeks=("origin_date", "nunique"), wis=("wis", "mean"), cover=("covered95", "mean"),
         cover50=("covered50", "mean")).reset_index()
-    ref = summary[summary["model"] == "persistence"].set_index("horizon")["wis"]
+    # "Same as last week" over the same weeks each model was scored on: a model
+    # added mid-season (ARIMA) has fewer weeks than the reference.
+    persist = done[done["model"] == "persistence"].groupby(["horizon", "origin_date"])["wis"].sum()
+    persist_n = done[done["model"] == "persistence"].groupby(["horizon", "origin_date"])["wis"].size()
     rows = []
     for r in summary[summary["model"] != "persistence"].itertuples():
-        rel = r.wis / ref.get(r.horizon, np.nan)
+        weeks = done[(done["model"] == r.model) & (done["horizon"] == r.horizon)]["origin_date"].unique()
+        keys = [(r.horizon, w) for w in weeks if (r.horizon, w) in persist.index]
+        ref = persist.loc[keys].sum() / persist_n.loc[keys].sum() if keys else np.nan
+        rel = r.wis / ref
         rows.append(ui.tags.tr(ui.tags.td(D.MODEL_SHORT.get(r.model, r.model)), ui.tags.td(r.horizon),
                                ui.tags.td(r.weeks),
                                ui.tags.td(f"{(1 - rel) * 100:+.0f}%" if np.isfinite(rel) else "—"),
@@ -766,6 +775,10 @@ def how_panel():
     shorts = {a: short(B, a) for a in B.areas}
     return ui.div(
         ui.h2("How the forecast works"),
+        ui.tags.blockquote(
+            ui.p("“All models are wrong, but some are useful.”"),
+            ui.tags.footer("— George E. P. Box"),
+            class_="epigraph"),
         ui.div(
             ui.div(ui.h4("What it forecasts"), ui.p(
                 f"Weekly {B.info['unit']}, for each of BPHC's {len(B.areas)} reporting "

@@ -2,7 +2,7 @@
   "city": "chicago",
   "label": "Chicago",
   "season": "2026_27",
-  "origin": "2026-09-20",
+  "origin": "2026-10-04",
   "horizons": [
     1,
     2,
@@ -12,17 +12,33 @@
   "models": [
     "gnn_st",
     "lstm",
-    "colagnn"
+    "colagnn",
+    "arima"
   ],
-  "backtest": "live/runs/chicago/backtest_20261005-235559",
+  "backtest": "live/runs/chicago/backtest_20261016-arima",
   "backtest_seasons": [
     "2023-24",
     "2024-25",
     "2025-26"
   ],
-  "issued": "2026-10-05T23:56:07",
+  "training": {
+    "model": "gnn_st",
+    "horizon": 1,
+    "train_targets": [
+      "2020-01-26",
+      "2025-10-05"
+    ],
+    "validation_targets": [
+      "2025-10-12",
+      "2026-10-04"
+    ]
+  },
+  "frozen_models": null,
+  "issued": "2026-10-17T14:57:19",
   "quick": false,
   "archived_origins": [
-    "2026-09-20"
+    "2026-09-20",
+    "2026-09-27",
+    "2026-10-04"
   ]
 }
