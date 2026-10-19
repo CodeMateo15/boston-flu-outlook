@@ -348,3 +348,241 @@ def two_city(series: dict[str, pd.Series], *, width=760, height=260) -> str:
         out.append(f'<text class="direct" x="{x + 8:.1f}" y="{y + 4:.1f}">{esc(name)}</text>')
     out.append("</svg>")
     return "".join(out)
+
+
+# --- what drove the forecast ---------------------------------------------------------------
+# One encoding for every chart in this group: warm pushes the forecast up, cool
+# pulls it down, grey is "about the same as a usual week". The sign is always
+# printed too, so colour never carries it alone.
+
+def signed(value: float, fmt) -> str:
+    """+1.2 / −0.4 with a real minus sign."""
+    text = fmt(abs(value))
+    return ("+" if value >= 0 else "−") + text
+
+
+def div_edges(values, floor: float = 0.05) -> list[float]:
+    """Three upper edges for the |value| classes 0-3, from the biggest push shown,
+    so a map or matrix keeps one scale across neighborhoods."""
+    v = np.abs(np.asarray([x for x in values if np.isfinite(x)], dtype=float))
+    top = float(np.percentile(v, 98)) if len(v) else 1.0
+    step = nice_ticks(max(top, floor * 4), 3)
+    e = [max(floor, step[1] / 4), step[1], step[2] if len(step) > 2 else step[1] * 2]
+    return [round(x, 2) for x in e]
+
+
+def div_class(value: float, edges: list[float]) -> str:
+    if value is None or not np.isfinite(value):
+        return "bna"
+    k = sum(abs(value) >= e for e in edges)
+    return "d0" if k == 0 else f"{'dp' if value > 0 else 'dn'}{k}"
+
+
+def legend_div(edges: list[float], fmt, unit: str) -> str:
+    e1, e2, e3 = edges
+    cells = [("dn3", f"down {fmt(e3)}+"), ("dn2", f"down {fmt(e2)}–{fmt(e3)}"),
+             ("dn1", f"down {fmt(e1)}–{fmt(e2)}"), ("d0", f"within ±{fmt(e1)}"),
+             ("dp1", f"up {fmt(e1)}–{fmt(e2)}"), ("dp2", f"up {fmt(e2)}–{fmt(e3)}"),
+             ("dp3", f"up {fmt(e3)}+")]
+    body = "".join(f'<span class="lg-cell"><span class="lg-swatch {c}"></span>{esc(t)}</span>'
+                   for c, t in cells)
+    return f'<div class="legend-bins"><span class="lg-title">{esc(unit)}</span>{body}</div>'
+
+
+def waterfall(rows: list[dict], *, base: float, total: float, base_label: str,
+              total_label: str, fmt, unit: str, whisker: tuple[float, float] | None = None,
+              base_tip: str = "", total_tip: str = "", width: int = 560) -> str:
+    """Start at a usual week, add each driver's push, end on the forecast. Rows are
+    {label, sub, value, se, tip}; bars float from the running total."""
+    L, R, T, row_h, bar_h = 182, 46, 10, 34, 16
+    n = len(rows) + 2
+    height = T + n * row_h + 28
+    running, ends = base, [0.0, base]
+    for r in rows:
+        running += r["value"]
+        ends.append(running)
+    ends += [total] + (list(whisker) if whisker else [])
+    lo, hi = min(0.0, min(ends)), max(ends) * 1.04
+    ticks = nice_ticks(hi)
+    hi = ticks[-1]
+    X = lambda v: L + (v - lo) / (hi - lo or 1) * (width - L - R)
+    out = [f'<svg class="chart waterfall" viewBox="0 0 {width} {height}" role="img" '
+           f'aria-label="What moved the forecast away from a usual week">']
+    for v in ticks:
+        out.append(f'<line class="grid" x1="{X(v):.1f}" x2="{X(v):.1f}" y1="{T}" '
+                   f'y2="{T + n * row_h:.1f}"/><text class="tick" x="{X(v):.1f}" '
+                   f'y="{T + n * row_h + 14:.1f}" text-anchor="middle">{_fmt_tick(v)}</text>')
+    out.append(f'<text class="tick" x="{width - R:.1f}" y="{height - 2}" '
+               f'text-anchor="end">{esc(unit)}</text>')
+
+    def row(i, label, sub, x0, x1, cls, value_text, tip, strong=False, label_at=None):
+        y = T + i * row_h
+        mid = y + row_h / 2
+        parts = [f'<g class="wf-row" data-tip="{esc(tip)}">',
+                 f'<rect class="hit" x="0" y="{y}" width="{width}" height="{row_h}"/>',
+                 f'<text class="row-label{" strong" if strong else ""}" x="{L - 12}" '
+                 f'y="{mid + (0 if sub else 4):.1f}" text-anchor="end">{esc(label)}</text>']
+        if sub:
+            parts.append(f'<text class="wf-sub" x="{L - 12}" y="{mid + 13:.1f}" '
+                         f'text-anchor="end">{esc(sub)}</text>')
+        a, b = sorted((X(x0), X(x1)))
+        parts.append(f'<rect class="wf-bar {cls}" x="{a:.1f}" y="{mid - bar_h / 2:.1f}" '
+                     f'width="{max(b - a, 2):.1f}" height="{bar_h}" rx="3"/>')
+        parts.append(f'<text class="wf-val{" strong" if strong else ""}" x="{max(a, b, label_at or 0) + 6:.1f}" '
+                     f'y="{mid + 4:.1f}">{esc(value_text)}</text></g>')
+        return "".join(parts)
+
+    out.append(row(0, base_label, "", 0, base, "wf-base", fmt(base), base_tip))
+    running = base
+    for i, r in enumerate(rows, start=1):
+        y = T + i * row_h
+        out.append(f'<line class="wf-link" x1="{X(running):.1f}" x2="{X(running):.1f}" '
+                   f'y1="{y - row_h / 2 + bar_h / 2:.1f}" y2="{y + row_h / 2 - bar_h / 2:.1f}"/>')
+        cls = "wf-up" if r["value"] > 0 else "wf-down"
+        out.append(row(i, r["label"], r.get("sub", ""), running, running + r["value"], cls,
+                       signed(r["value"], fmt), r["tip"]))
+        running += r["value"]
+    i = n - 1
+    y = T + i * row_h
+    out.append(f'<line class="wf-link" x1="{X(running):.1f}" x2="{X(running):.1f}" '
+               f'y1="{y - row_h / 2 + bar_h / 2:.1f}" y2="{y + row_h / 2 - bar_h / 2:.1f}"/>')
+    out.append(row(i, total_label, "", 0, total, "wf-total", fmt(total), total_tip, strong=True,
+                   label_at=X(whisker[1]) if whisker else None))
+    if whisker:
+        mid = y + row_h / 2
+        a, b = X(whisker[0]), X(whisker[1])
+        out.append(f'<g class="wf-whisker"><line x1="{a:.1f}" x2="{b:.1f}" y1="{mid:.1f}" '
+                   f'y2="{mid:.1f}"/><line x1="{a:.1f}" x2="{a:.1f}" y1="{mid - 6:.1f}" '
+                   f'y2="{mid + 6:.1f}"/><line x1="{b:.1f}" x2="{b:.1f}" y1="{mid - 6:.1f}" '
+                   f'y2="{mid + 6:.1f}"/></g>')
+    out.append("</svg>")
+    return "".join(out)
+
+
+def spillover_map(geo: dict, values: dict[str, float], target: str, edges: list[float], *,
+                  tips: dict[str, str], arrows: list[tuple[str, float]], input_id: str) -> str:
+    """Each other area coloured by what it adds to `target`'s forecast; arrows from
+    the biggest contributors, width by size."""
+    out = [f'<svg class="chart map spill" viewBox="{geo["viewBox"]}" role="img" '
+           f'aria-label="What each neighborhood adds to the selected one">',
+           '<defs>'
+           '<marker id="spill-up" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="4" '
+           'markerHeight="4" orient="auto-start-reverse"><path class="head-up" d="M0,0L10,5L0,10Z"/></marker>'
+           '<marker id="spill-down" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="4" '
+           'markerHeight="4" orient="auto-start-reverse"><path class="head-down" d="M0,0L10,5L0,10Z"/></marker>'
+           '</defs>']
+    if geo.get("context"):
+        out.append(f'<path class="context" d="{geo["context"]}"/>')
+    for area, shape in geo["areas"].items():
+        cls = "spill-target" if area == target else div_class(values.get(area, np.nan), edges)
+        out.append(f'<path class="area {cls}" d="{shape["d"]}" fill-rule="evenodd" '
+                   f'data-area="{esc(area)}" data-input="{input_id}" '
+                   f'data-tip="{esc(tips.get(area, area))}" tabindex="0"/>')
+    if target in geo["areas"]:
+        out.append(f'<path class="area-outline" d="{geo["areas"][target]["d"]}" fill-rule="evenodd"/>')
+    top = max([abs(v) for _, v in arrows] + [1e-9])
+    tx, ty = geo["areas"][target]["c"] if target in geo["areas"] else (0, 0)
+    for source, value in arrows:
+        if source not in geo["areas"]:
+            continue
+        sx, sy = geo["areas"][source]["c"]
+        dx, dy = tx - sx, ty - sy
+        dist = math.hypot(dx, dy) or 1
+        # Stop short of both centroids; bow the line so arrows into one target fan out.
+        ex, ey = tx - dx / dist * 12, ty - dy / dist * 12
+        bx, by = sx + dx / dist * 8, sy + dy / dist * 8
+        cx, cy = (bx + ex) / 2 - dy * 0.18, (by + ey) / 2 + dx * 0.18
+        kind = "up" if value > 0 else "down"
+        out.append(f'<path class="spill-arrow {kind}" d="M{bx:.1f},{by:.1f}Q{cx:.1f},{cy:.1f} '
+                   f'{ex:.1f},{ey:.1f}" stroke-width="{1.5 + 4.5 * abs(value) / top:.1f}" '
+                   f'marker-end="url(#spill-{kind})"/>')
+    out.append(f'<circle class="spill-dot" cx="{tx}" cy="{ty}" r="5"/>')
+    out.append("</svg>")
+    return "".join(out)
+
+
+def driver_matrix(table: pd.DataFrame, drivers: list[str], heads: dict[str, str], *,
+                  names: dict[str, str], edges: list[float], fmt, tips: dict, selected: str | None,
+                  input_id: str, width: int = 760) -> str:
+    """Neighborhoods x drivers, each cell coloured by its push. Rows are clickable;
+    the right column is the forecast against a usual week."""
+    L, R, T, row_h = 168, 118, 30, 26
+    height = T + len(table) * row_h + 6
+    cell_w = (width - L - R) / len(drivers)
+    out = [f'<svg class="chart matrix" viewBox="0 0 {width} {height}" role="img" '
+           f'aria-label="What drives each neighborhood\'s forecast">']
+    for j, d in enumerate(drivers):
+        out.append(f'<text class="col-head" x="{L + (j + 0.5) * cell_w:.1f}" y="{T - 10}" '
+                   f'text-anchor="middle">{esc(heads[d])}</text>')
+    out.append(f'<text class="col-head" x="{width - 6}" y="{T - 10}" text-anchor="end">'
+               f'forecast (vs usual)</text>')
+    for i, (area, row) in enumerate(table.iterrows()):
+        y = T + i * row_h
+        sel = " selected" if area == selected else ""
+        out.append(f'<g class="mx-row{sel}" data-area="{esc(area)}" data-input="{input_id}" tabindex="0">'
+                   f'<rect class="mx-hit" x="0" y="{y}" width="{width}" height="{row_h}"/>'
+                   f'<text class="row-label" x="{L - 10}" y="{y + row_h / 2 + 4:.1f}" '
+                   f'text-anchor="end">{esc(names.get(area, area))}</text>')
+        for j, d in enumerate(drivers):
+            v = row.get(d, np.nan)
+            out.append(f'<rect class="mx-cell {div_class(v, edges)}" x="{L + j * cell_w + 1:.1f}" '
+                       f'y="{y + 1}" width="{cell_w - 2:.1f}" height="{row_h - 2}" rx="3" '
+                       f'data-tip="{esc(tips[(area, d)])}"/>')
+        delta = row["total"] - row["base"]
+        out.append(f'<text class="mx-total" x="{width - 6}" y="{y + row_h / 2 + 4:.1f}" '
+                   f'text-anchor="end">{esc(fmt(row["total"]))} '
+                   f'<tspan class="mx-delta">({esc(signed(delta, fmt))})</tspan></text></g>')
+    out.append("</svg>")
+    return "".join(out)
+
+
+def driver_timeline(hist: pd.DataFrame, drivers: list[str], heads: dict[str, str], labels: dict, *,
+                    edges: list[float], fmt, unit: str, latest, width: int = 760) -> str:
+    """Top: the forecast for each week (made `h` weeks earlier) against a usual week
+    and what happened. Below, aligned, one strip per driver: what pushed it."""
+    hist = hist.dropna(subset=["output"])
+    dates = list(hist["target_date"])
+    top_h, strip_h = 150, 17
+    height = top_h + 18 + strip_h * len(drivers) + 22
+    vals = list(hist["output"]) + list(hist["base"]) + [v for v in hist["actual"] if np.isfinite(v)]
+    fr = Frame(width, height, dates[0] - pd.Timedelta(days=4), dates[-1] + pd.Timedelta(days=4),
+               max(vals) * 1.08, left=96, right=16, top=14, bottom=height - top_h)
+    out = [f'<svg class="chart timeline" viewBox="0 0 {width} {height}" role="img" '
+           f'aria-label="What drove the forecast each week this season">', fr.grid(unit)]
+    usual = [(fr.x(d), fr.y(v)) for d, v in zip(dates, hist["base"])]
+    fc = [(fr.x(d), fr.y(v)) for d, v in zip(dates, hist["output"])]
+    out.append(f'<path class="line usual" d="{_path(usual)}"/>')
+    out.append(f'<path class="line forecast" d="{_path(fc)}"/>')
+    for d, v in zip(dates, hist["actual"]):
+        if np.isfinite(v):
+            out.append(f'<circle class="dot actual" cx="{fr.x(d):.1f}" cy="{fr.y(v):.1f}" r="3.5"/>')
+    # Direct labels at the start of the season, clear of the latest week.
+    above = usual[0][1] <= fc[0][1]
+    out.append(f'<text class="direct" x="{fc[0][0]:.1f}" y="{fc[0][1] + (16 if above else -9):.1f}">'
+               f'forecast</text>')
+    out.append(f'<text class="direct muted" x="{usual[0][0]:.1f}" '
+               f'y="{usual[0][1] + (-9 if above else 16):.1f}">usual week</text>')
+    step = (fr.x(dates[1]) - fr.x(dates[0])) if len(dates) > 1 else 20
+    y0 = top_h + 18
+    for i, d in enumerate(drivers):
+        y = y0 + i * strip_h
+        out.append(f'<text class="row-label" x="{fr.l - 8}" y="{y + 12}" text-anchor="end">'
+                   f'{esc(heads[d])}</text>')
+        for date_, v in zip(dates, hist[d]):
+            out.append(f'<rect class="mx-cell {div_class(v, edges)}" x="{fr.x(date_) - step / 2 + 1:.1f}" '
+                       f'y="{y + 1}" width="{max(step - 2, 2):.1f}" height="{strip_h - 2}" rx="2"/>')
+    bottom = y0 + strip_h * len(drivers)
+    for (origin, r), d in zip(hist.iterrows(), dates):
+        lines = [f"Week of {_date(d)}, forecast on {_date(origin)}",
+                 f"Forecast: {fmt(r['output'])}", f"Usual week: {fmt(r['base'])}"]
+        if np.isfinite(r["actual"]):
+            lines.append(f"Reported: {fmt(r['actual'])}")
+        lines += [f"{labels[k][0]}: {signed(r[k], fmt)}" for k in drivers if np.isfinite(r[k])]
+        x = fr.x(d)
+        cls = " latest" if origin == latest else ""
+        out.append(f'<g class="col{cls}" data-tip="{esc(chr(10).join(lines))}">'
+                   f'<rect class="hit" x="{x - step / 2:.1f}" y="{fr.t}" width="{step:.1f}" '
+                   f'height="{bottom - fr.t:.1f}"/><line class="guide" x1="{x:.1f}" x2="{x:.1f}" '
+                   f'y1="{fr.t}" y2="{bottom:.1f}"/></g>')
+    out.append("</svg>")
+    return "".join(out)

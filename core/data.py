@@ -59,6 +59,11 @@ CITY_INFO = {
                    "at one's own risk."),
 }
 
+# What the graph model's forecast is split into (publish.py copies the package's
+# drivers.csv): the area's own inputs, then everything the other areas add.
+OWN_DRIVERS = ("level", "trend", "history", "weather", "calendar")
+DRIVERS = OWN_DRIVERS + ("neighbor",)
+
 LEVELS = ("Low", "Moderate", "High", "Very high")
 LEVEL_STATUS = {"Low": "good", "Moderate": "warning", "High": "serious", "Very high": "critical"}
 
@@ -78,6 +83,7 @@ class CityData:
     edges: list[tuple[str, str]]
     thresholds: pd.DataFrame = field(default_factory=pd.DataFrame)
     runtimes: pd.DataFrame | None = None  # seconds per model, horizon and weekly origin
+    drivers: pd.DataFrame | None = None   # graph-model attributions, one row per driver
 
     # --- basics ------------------------------------------------------------
     @property
@@ -201,6 +207,61 @@ class CityData:
             roles[label] = "current" if label == current else "training" if fit else "validation"
         return roles
 
+    # --- what drove the graph model ----------------------------------------------
+    @property
+    def has_drivers(self) -> bool:
+        return self.drivers is not None and (self.drivers["origin_date"] == self.origin).any()
+
+    def _drivers(self, area: str | None, h: int, origin=None) -> pd.DataFrame:
+        d = self.drivers
+        d = d[(d["horizon"] == h) & (d["origin_date"] == (self.origin if origin is None else origin))]
+        return d if area is None else d[d["area"] == area]
+
+    def waterfall(self, area: str, h: int) -> dict:
+        """Base (a usual week at this time of year), each driver's push, and the
+        forecast they add up to. `adjust` takes the explained forecast to the
+        published median."""
+        d = self._drivers(area, h)
+        own = d[d["driver"].isin(OWN_DRIVERS)].set_index("driver")
+        nbr = d[d["driver"] == "neighbor"].set_index("source_area")
+        adjust = d.loc[d["driver"] == "adjust", "value"].sum()
+        steps = [(k, float(own.at[k, "value"]), float(own.at[k, "se"])) for k in OWN_DRIVERS
+                 if k in own.index]
+        steps.append(("neighbor", float(nbr["value"].sum()),
+                      float(np.sqrt((nbr["se"] ** 2).sum()))))
+        first = d.iloc[0]
+        return {"base": float(first["base"]), "steps": steps, "adjust": float(adjust),
+                "output": float(first["output"]), "total": float(first["output"] + adjust),
+                "neighbors": nbr["value"].sort_values(key=abs, ascending=False),
+                "blend_share": float(first["blend_share"]),
+                "target_date": pd.Timestamp(first["target_date"])}
+
+    def spillover(self, area: str, h: int) -> pd.Series:
+        """What every other area adds to `area`'s forecast, by source area."""
+        d = self._drivers(area, h)
+        return d[d["driver"] == "neighbor"].set_index("source_area")["value"]
+
+    def driver_matrix(self, h: int) -> pd.DataFrame:
+        """Areas x drivers (neighbors summed), plus base and forecast, at the live origin."""
+        d = self._drivers(None, h)
+        out = (d[d["driver"].isin(DRIVERS)].groupby(["area", "driver"])["value"].sum()
+               .unstack("driver").reindex(columns=list(DRIVERS)))
+        firsts = d.groupby("area")[["base", "output"]].first()
+        adjust = d[d["driver"] == "adjust"].groupby("area")["value"].sum()
+        out["base"] = firsts["base"]
+        out["total"] = firsts["output"] + adjust.reindex(firsts.index).fillna(0)
+        return out.reindex(self.areas)
+
+    def driver_history(self, area: str, h: int) -> pd.DataFrame:
+        """Per origin since the season start: each driver, base, forecast and what
+        happened, for one area and horizon."""
+        d = self.drivers
+        d = d[(d["area"] == area) & (d["horizon"] == h)]
+        out = (d[d["driver"].isin(DRIVERS)].groupby(["origin_date", "driver"])["value"].sum()
+               .unstack("driver").reindex(columns=list(DRIVERS)))
+        firsts = d.groupby("origin_date")[["target_date", "base", "output", "actual"]].first()
+        return out.join(firsts).sort_index()
+
     def typical_peak(self) -> float:
         """Median of past complete seasons' citywide peaks, skipping 2020-21, the
         season flu did not circulate."""
@@ -234,12 +295,16 @@ def _load(key: str) -> CityData | None:
     trust_notes = [line[2:].strip() for line in (folder / "trust.md").read_text().splitlines()
                    if line.startswith("- ")]
     edges = pd.read_csv(folder / "edges.csv", dtype=str)
+    driver_file = folder / "drivers.csv"
+    drivers = (pd.read_csv(driver_file, parse_dates=["origin_date", "target_date"],
+                           dtype={"area": str, "source_area": str}).fillna({"source_area": ""})
+               if driver_file.exists() else None)
     city = CityData(
         key=key, info=CITY_INFO[key], meta=meta, forecast=forecast, history=history,
         comparison=pd.read_csv(folder / "backtest_comparison.csv"),
         bt_scores=pd.read_csv(folder / "backtest_scores.csv"), live_scores=live_scores,
         trust_notes=trust_notes, geo=json.loads((folder / "geo.json").read_text()),
-        edges=list(zip(edges["a"], edges["b"])), runtimes=runtimes)
+        edges=list(zip(edges["a"], edges["b"])), runtimes=runtimes, drivers=drivers)
     city.thresholds = _thresholds(history)
     return city
 

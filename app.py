@@ -301,6 +301,211 @@ def headline(city: D.CityData) -> str:
             f"peak</strong> and is expected to <strong>{verb}</strong> over the next {hmax} weeks.")
 
 
+# --- what drove the forecast -------------------------------------------------------------
+
+# How each driver reads inside a sentence.
+DRIVER_PHRASE = {"level": "this week's reading", "trend": "the three weeks before it",
+                 "history": "earlier weeks", "weather": "the weather",
+                 "calendar": "the time of year", "neighbor": "neighboring areas"}
+
+
+def notable(steps, floor: float = 0.1) -> list[tuple[str, float, float]]:
+    """Drivers big enough to mention: clear of their sampling error and of rounding."""
+    return sorted([s for s in steps if abs(s[1]) >= max(2 * s[2], floor)],
+                  key=lambda s: -abs(s[1]))
+
+
+def neighbor_names(city: D.CityData, nbr: pd.Series, n: int = 2) -> str:
+    names = [short(city, a) for a, v in nbr.items() if abs(v) >= 0.05][:n]
+    return " and ".join(names)
+
+
+def driver_sentence(city: D.CityData, area: str, h: int, wf: dict) -> str:
+    total, base = wf["total"], wf["base"]
+    gap = total - base
+    where = "above" if gap > 0 else "below"
+    head = (f"<strong>{short(city, area)}</strong>, {h} week{'s' if h > 1 else ''} ahead "
+            f"(week of {week_span(wf['target_date'])}): the graph model expects "
+            f"<strong>{city.fmt(total)}</strong> {city.info['unit_short']}, "
+            f"<strong>{city.fmt(abs(gap))} {where}</strong> a usual week at this time of year "
+            f"({city.fmt(base)}). ")
+    top = notable(wf["steps"])[:3]
+    if not top:
+        return head + "No single input moves it far from a usual week."
+    parts = []
+    for key, value, _ in top:
+        text = f"{DRIVER_PHRASE[key]} ({C.signed(value, city.fmt)})"
+        if key == "neighbor":
+            names = neighbor_names(city, wf["neighbors"])
+            text += f", mostly {names}" if names else ""
+        parts.append(text)
+    lead = top[0]
+    verb = "pushes it up" if lead[1] > 0 else "pulls it down"
+    rest = (f", followed by {' and '.join(parts[1:])}" if len(parts) > 1 else "")
+    return head + f"The biggest factor, {parts[0]}, {verb}{rest}."
+
+
+def driver_teaser(city: D.CityData, area: str) -> str | None:
+    """One line for the Neighborhood tab: what is behind next week's number."""
+    if not city.has_drivers:
+        return None
+    wf = city.waterfall(area, min(city.horizons))
+    top = notable(wf["steps"])[:2]
+    if not top:
+        return "Behind next week's number: nothing far from a usual week at this time of year."
+    bits = [f"{DRIVER_PHRASE[k]} ({C.signed(v, city.fmt)})" for k, v, _ in top]
+    return (f"Behind next week's number, against a usual week at this time of year "
+            f"({city.fmt(wf['base'])}): mostly {' and '.join(bits)}.")
+
+
+def waterfall_block(city: D.CityData, area: str, h: int, analyst: bool):
+    wf = city.waterfall(area, h)
+    unit = city.info["unit_short"]
+    rows = []
+    for key, value, se in wf["steps"]:
+        name, _, meaning = V.DRIVER_LABELS[key]
+        sub = ""
+        if key == "neighbor":
+            top = [(a, v) for a, v in wf["neighbors"].items() if abs(v) >= 0.05][:2]
+            sub = ", ".join(f"{short(city, a)} {C.signed(v, city.fmt)}" for a, v in top)
+        noise = f" (± {se:.2f} from sampling)" if se >= 0.01 else ""
+        tip = f"{name}\n{C.signed(value, city.fmt)} {unit}{noise}\n{meaning}"
+        rows.append({"label": name, "sub": sub, "value": value, "se": se, "tip": tip})
+    if abs(wf["adjust"]) >= 0.005 or analyst:
+        name, _, meaning = V.DRIVER_LABELS["adjust"]
+        rows.append({"label": name, "sub": "", "value": wf["adjust"], "se": 0.0,
+                     "tip": f"{name}\n{C.signed(wf['adjust'], city.fmt)} {unit}\n{meaning}"})
+    r = city.rows(D.PRIMARY, area)
+    r = r[r["horizon"] == h]
+    whisker = (float(r["q0.250"].iloc[0]), float(r["q0.750"].iloc[0])) if len(r) else None
+    base_tip = (f"{V.BASE_LABEL}\n{city.fmt(wf['base'])} {unit}\nWhat the model forecasts when "
+                "every input is at its average for the same weeks of the year in the seasons it "
+                "learned from (2018 to spring 2026).")
+    total_tip = (f"Forecast (graph model median)\n{city.fmt(wf['total'])} {unit}"
+                 + (f"\nLikely range (50%): {city.fmt(whisker[0])}–{city.fmt(whisker[1])}"
+                    if whisker else ""))
+    svg = C.waterfall(rows, base=wf["base"], total=wf["total"], base_label="Usual week",
+                      total_label="Forecast", fmt=city.fmt, unit=unit, whisker=whisker,
+                      base_tip=base_tip, total_tip=total_tip)
+    return ui.div(
+        ui.h3("From a usual week to this forecast"),
+        ui.p("Start at what the model would forecast for a usual week at this time of year, "
+             "then add what each input pushes up (warm) or pulls down (cool). The bars add up "
+             "exactly to the forecast; the whisker on it is the likely (50%) range. Hover a "
+             "bar for what it means.", class_="blurb"),
+        ui.div(ui.span(ui.span(class_="sw-box wf-up"), "pushes the forecast up", class_="key"),
+               ui.span(ui.span(class_="sw-box wf-down"), "pulls it down", class_="key"),
+               class_="legend"),
+        ui.HTML(svg), class_="card")
+
+
+def spill_block(city: D.CityData, area: str, h: int, input_id: str):
+    values = city.spillover(area, h)
+    every = city.drivers
+    every = every[(every["origin_date"] == city.origin) & (every["horizon"] == h)
+                  & (every["driver"] == "neighbor")]["value"]
+    edges = C.div_edges(every)
+    unit = city.info["unit_short"]
+    tips = {}
+    for a in city.areas:
+        if a == area:
+            tips[a] = f"{short(city, a)}\nThe neighborhood being forecast"
+            continue
+        v = values.get(a, np.nan)
+        verb = "adds" if v >= 0 else "takes off"
+        tips[a] = (f"{short(city, a)}\n{verb} {city.fmt(abs(v))} {unit} to "
+                   f"{short(city, area)}'s forecast\nClick to explain {short(city, a)} instead")
+    arrows = [(a, v) for a, v in values.sort_values(key=abs, ascending=False).items()
+              if abs(v) >= edges[0]][:3]
+    svg = C.spillover_map(city.geo, values.to_dict(), area, edges, tips=tips, arrows=arrows,
+                          input_id=input_id)
+    total = values.sum()
+    return ui.div(
+        ui.h3("Spillover from other neighborhoods"),
+        ui.p(f"How much each neighborhood's recent weeks move {short(city, area)}'s forecast "
+             f"(outlined), {C.signed(total, city.fmt)} in all. Arrows mark the three biggest. "
+             "Click any neighborhood to explain it instead.", class_="blurb"),
+        ui.HTML(svg), ui.HTML(C.legend_div(edges, city.fmt, unit)), class_="card")
+
+
+def matrix_block(city: D.CityData, area: str, h: int, input_id: str):
+    table = city.driver_matrix(h)
+    table = table.assign(_gap=table["total"] - table["base"]).sort_values("_gap", ascending=False)
+    drivers = list(D.DRIVERS)
+    edges = C.div_edges(table[drivers].to_numpy().ravel())
+    unit = city.info["unit_short"]
+    tips = {(a, d): f"{short(city, a)} · {V.DRIVER_LABELS[d][0]}\n"
+                    f"{C.signed(row[d], city.fmt)} {unit}\n{V.DRIVER_LABELS[d][2]}"
+            for a, row in table.iterrows() for d in drivers}
+    svg = C.driver_matrix(table, drivers, {d: V.DRIVER_LABELS[d][1] for d in drivers},
+                          names={a: short(city, a) for a in city.areas}, edges=edges,
+                          fmt=city.fmt, tips=tips, selected=area, input_id=input_id)
+    return ui.div(
+        ui.h3("Every neighborhood, side by side"),
+        ui.p(f"Each row is one neighborhood's forecast {h} week{'s' if h > 1 else ''} ahead, "
+             "split the same way, highest above a usual week first. Read down a column: a "
+             "rise that shows up under “This week” and “Recent weeks” everywhere is local "
+             "momentum across the city; one that shows up under “Neighbors” is the model "
+             "expecting spread. Click a row to explain it.", class_="blurb"),
+        ui.HTML(svg), ui.HTML(C.legend_div(edges, city.fmt, unit)), class_="chart-card")
+
+
+def timeline_block(city: D.CityData, area: str, h: int):
+    hist = city.driver_history(area, h)
+    if len(hist) < 2:
+        return None
+    drivers = list(D.DRIVERS)
+    edges = C.div_edges(hist[drivers].to_numpy().ravel())
+    svg = C.driver_timeline(hist, drivers, {d: V.DRIVER_LABELS[d][1] for d in drivers},
+                            V.DRIVER_LABELS, edges=edges, fmt=city.fmt,
+                            unit=city.info["unit_short"], latest=city.origin)
+    first = hist.index.min()
+    return ui.div(
+        ui.h3("What drove it, week by week"),
+        ui.p(f"Every {h}-week forecast the same saved model would have made for "
+             f"{short(city, area)} since {date(first)} (the model never saw these weeks while "
+             "training). Top: the forecast for each week against a usual week and what BPHC "
+             "then reported. Below: which inputs pushed each one, in the same colours. Hover a "
+             "week for the numbers.", class_="blurb"),
+        ui.div(ui.span(ui.span(class_="sw obs"), "forecast", class_="key"),
+               ui.span(ui.span(class_="sw usual"), "usual week", class_="key"),
+               ui.span(ui.span(class_="sw-ring"), "reported", class_="key"), class_="legend"),
+        ui.HTML(svg), ui.HTML(C.legend_div(edges, city.fmt, city.info["unit_short"])),
+        class_="chart-card")
+
+
+def method_block(city: D.CityData, area: str, h: int, analyst: bool):
+    wf = city.waterfall(area, h)
+    caveat = ui.p("These numbers describe what the model responds to, not what causes flu to "
+                  "spread: a big “Neighbors” bar means the model reads its neighbors' recent "
+                  "weeks as a signal, which is what it was built to do, not proof that illness "
+                  "travelled between them.", class_="note")
+    if not analyst:
+        return ui.div(caveat, class_="card")
+    meta = city.meta.get("frozen_models") or {}
+    return ui.div(
+        ui.h3("Method"),
+        ui.tags.ul(
+            ui.tags.li("Owen values (Shapley values with the other neighborhoods as one group, "
+                       "split again between them) of the frozen graph-model ensemble, in rate "
+                       "units. They add up exactly to the forecast minus the base."),
+            ui.tags.li("Base: every input set to its mean over training origins within four "
+                       "weeks of the same date. Inputs set to typical values while correlated "
+                       "ones keep this week's form combinations the model never saw; read small "
+                       "values with that in mind."),
+            ui.tags.li("Estimated from sampled orderings (256 this week, 128 for earlier "
+                       "weeks), each with its reverse. Hover a bar for its sampling error."),
+            ui.tags.li(f"The model puts {wf['blend_share']:.0%} of its own baseline on this "
+                       f"week's level and {1 - wf['blend_share']:.0%} on the seasonal curve at "
+                       f"{h} week{'s' if h > 1 else ''} ahead; the network adds the rest."),
+            ui.tags.li(f"“Averaging model runs” is {C.signed(wf['adjust'], city.fmt)} here: "
+                       "the published median is the mean of MC-Dropout draws; this explains the "
+                       "deterministic ensemble mean."),
+            ui.tags.li(f"Saved models trained on weeks before {meta.get('anchor', 'the season')}"
+                       f", loaded unchanged each week.")),
+        caveat, class_="card")
+
+
 # --- UI -------------------------------------------------------------------------------
 
 def topbar():
@@ -398,6 +603,26 @@ def server(input, output, session):
                     ui.output_ui("detail_ribbons"),
                     class_="chart-card"),
                 value="detail"),
+            "drivers": ui.nav_panel(
+                V.TAB_TITLES["drivers"],
+                preview_banner(B),
+                ui.h2("What's driving the forecast"),
+                ui.p("The graph model reads each neighborhood's recent weeks, its weather, the "
+                     "time of year and its neighbors' recent weeks. This page splits each "
+                     "forecast into those pieces, so you can see whether a rise is local "
+                     "momentum, spillover from next door, or just the season.", class_="blurb"),
+                ui.div(
+                    ui.input_select("drv_area", "Neighborhood",
+                                    {a: short(B, a) for a in B.areas}, selected=area),
+                    ui.input_slider("drv_h", "Weeks ahead", min(B.horizons), hmax_b,
+                                    min(B.horizons), step=1, ticks=True,
+                                    animate=ui.AnimationOptions(interval=1600, loop=False)),
+                    class_="controls"),
+                ui.p("Press play to watch the picture change as the forecast looks further "
+                     "ahead: this week's reading matters most next week, while the season and "
+                     "the neighbors matter more by week four.", class_="note"),
+                ui.output_ui("drv_body"),
+                value="drivers") if B.has_drivers else None,
             "all": ui.nav_panel(
                 V.TAB_TITLES["all"],
                 preview_banner(B),
@@ -424,7 +649,8 @@ def server(input, output, session):
                 value="table"),
             "how": ui.nav_panel(V.TAB_TITLES["how"], how_panel(), value="how"),
         }
-        wanted = [t for t in V.TABS[m] if t != "chicago" or CHI is not None]
+        wanted = [t for t in V.TABS[m] if (t != "chicago" or CHI is not None)
+                  and panels[t] is not None]
         return ui.navset_card_tab(*[panels[t] for t in wanted], id="nav", selected=wanted[0])
 
     # --- map clicks: every clickable area lands on the detail view ---------------
@@ -435,12 +661,38 @@ def server(input, output, session):
         if area in B.areas:
             sel_area.set(area)
             ui.update_select("area", selected=area)
+            ui.update_select("drv_area", selected=area)
             ui.update_navs("nav", selected="detail")
 
+    # The Neighborhood and What's-driving-it tabs share one selected area.
     @reactive.effect
     @reactive.event(input.area)
     def _keep_area():
         sel_area.set(input.area())
+        if "drv_area" in input and input.drv_area() != input.area():
+            ui.update_select("drv_area", selected=input.area())
+
+    @reactive.effect
+    @reactive.event(input.drv_area)
+    def _keep_drv_area():
+        sel_area.set(input.drv_area())
+        if "area" in input and input.area() != input.drv_area():
+            ui.update_select("area", selected=input.drv_area())
+
+    # Clicks on the spillover map and the matrix explain that area, on the same tab.
+    @reactive.effect
+    @reactive.event(input.drv_click)
+    def _drv_click():
+        area = input.drv_click()
+        if area in B.areas:
+            sel_area.set(area)
+            ui.update_select("drv_area", selected=area)
+            ui.update_select("area", selected=area)
+
+    @reactive.effect
+    @reactive.event(input.to_drivers)
+    def _to_drivers():
+        ui.update_navs("nav", selected="drivers")
 
     @reactive.effect
     @reactive.event(input.chi_click)
@@ -498,8 +750,11 @@ def server(input, output, session):
                                   trust_badge(B.trust(m, 1)), " ")
                           for m in models if m != "persistence"],
                         class_="legend")
+        teaser = driver_teaser(B, area)
         return ui.div(
             ui.p(ui.HTML(sentence), class_="callout"),
+            ui.p(teaser, " ", ui.input_action_link("to_drivers", "See what's driving it →"),
+                 class_="teaser") if teaser else None,
             ui.div(ui.span("Past-season check, 1 week ahead:", class_="note"), badges),
             fan_block(B, area, models, f"{short(B, area)}: the next four weeks",
                       f"{B.info['unit'].capitalize()}. The vertical line is the latest "
@@ -511,6 +766,24 @@ def server(input, output, session):
         if area not in B.areas:
             area = B.areas[0]
         return ribbons_block(B, area, input.ribbon_set() if "ribbon_set" in input else "all")
+
+    # --- what's driving it ------------------------------------------------------------
+    if B.has_drivers:
+        @render.ui
+        def drv_body():
+            area = input.drv_area() or sel_area()
+            if area not in B.areas:
+                area = B.areas[0]
+            h = int(input.drv_h() or min(B.horizons))
+            analyst = mode() == "analyst"
+            wf = B.waterfall(area, h)
+            return ui.div(
+                ui.p(ui.HTML(driver_sentence(B, area, h, wf)), class_="callout"),
+                ui.div(waterfall_block(B, area, h, analyst), spill_block(B, area, h, "drv_click"),
+                       class_="grid-2"),
+                matrix_block(B, area, h, "drv_click"),
+                timeline_block(B, area, h),
+                method_block(B, area, h, analyst))
 
     # --- small multiples -----------------------------------------------------------
     @render.ui
@@ -734,14 +1007,18 @@ def live_block(city: D.CityData):
 
 
 def runtime_block(city: D.CityData):
-    """Wall-clock time per model for each weekly forecast: training plus forecasting
-    all four weeks ahead. Recorded since the 2026-10-04 forecast."""
+    """Wall-clock time per model for each weekly forecast: training (or loading the
+    season-start fit) plus forecasting all four weeks ahead. Recorded since the
+    2026-10-04 forecast."""
     rt = city.runtimes
     if rt is None or rt.empty:
         return None
-    per_run = rt.groupby(["origin", "model"])["seconds"].sum().reset_index()
+    if "loaded" not in rt:
+        rt = rt.assign(loaded=False)
+    rt = rt.assign(loaded=rt["loaded"].fillna(False).astype(bool))
+    per_run = rt.groupby(["origin", "model"]).agg(seconds=("seconds", "sum"),
+                                                  loaded=("loaded", "all")).reset_index()
     latest = per_run["origin"].max()
-    runs = per_run["origin"].nunique()
     rows = []
     for m in city.models:
         mine = per_run[per_run["model"] == m]
@@ -749,24 +1026,30 @@ def runtime_block(city: D.CityData):
             continue
         now = mine.loc[mine["origin"] == latest, "seconds"]
         cfg = rt[(rt["model"] == m) & (rt["origin"] == latest)].iloc[0]
-        settings = (f"{int(cfg['n_seeds'])} seeds × {int(cfg['epochs'])} epochs"
-                    if pd.notna(cfg.get("n_seeds")) and pd.notna(cfg.get("epochs"))
-                    else "fitted per neighborhood, no training passes")
+        trained = rt[(rt["model"] == m) & ~rt["loaded"] & (rt["epochs"].fillna(1) > 0)]
+        fresh = trained.groupby("origin")["seconds"].sum()
+        if cfg["loaded"]:
+            settings = "loaded from the season-start fit"
+        elif pd.notna(cfg.get("n_seeds")) and pd.notna(cfg.get("epochs")):
+            settings = f"{int(cfg['n_seeds'])} seeds × {int(cfg['epochs'])} epochs"
+        else:
+            settings = "fitted per neighborhood, no training passes"
         rows.append(ui.tags.tr(ui.tags.td(D.MODEL_SHORT.get(m, m)),
                                ui.tags.td(duration(now.sum()) if len(now) else "—"),
-                               ui.tags.td(duration(mine["seconds"].median())),
+                               ui.tags.td(duration(fresh.median()) if len(fresh) else "—"),
                                ui.tags.td(settings)))
     machines = sorted(rt.loc[rt["origin"] == latest, "machine"].dropna().unique())
     where = f" on {', '.join(machines)}" if machines else ""
     return ui.div(
         ui.h3("How long each model takes"),
-        ui.p(f"Time to train each model and forecast all four weeks ahead, for the forecast "
-             f"made from data through {week_end(latest)}{where}. “Typical” is the median over "
-             + (f"the {runs} weekly forecasts timed so far. " if runs > 1 else
-                "every weekly forecast, once more weeks have been timed. ")
-             + "“Same as last week” needs no training, so it is left out.", class_="blurb"),
+        ui.p(f"Time to forecast all four weeks ahead from data through {week_end(latest)}"
+             f"{where}. Every model is trained once at the start of the season and loaded "
+             "unchanged each week, which gives the same numbers as retraining from the season "
+             "start; “Training from scratch” is what a weekly retrain used to take. “Same as "
+             "last week” needs no training, so it is left out.", class_="blurb"),
         ui.div(ui.tags.table(ui.tags.thead(ui.tags.tr(
-            *[ui.tags.th(t) for t in ("Model", "This week", "Typical", "Settings")])),
+            *[ui.tags.th(t) for t in ("Model", "This week", "Training from scratch",
+                                      "Settings")])),
             ui.tags.tbody(*rows), class_="score-table"), class_="table-scroll"),
         class_="chart-card")
 

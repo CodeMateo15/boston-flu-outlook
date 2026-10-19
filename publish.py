@@ -193,6 +193,12 @@ def publish(city: str, folder: Path, data_folder: Path | None) -> None:
         shutil.copy(scores, out / "live_scores.csv")
     elif (out / "live_scores.csv").exists():
         (out / "live_scores.csv").unlink()
+    # What drove the graph model (live_forecast.py explain); only frozen-model
+    # forecasts have it.
+    if (folder / "drivers.csv").exists():
+        shutil.copy(folder / "drivers.csv", out / "drivers.csv")
+    elif (out / "drivers.csv").exists():
+        (out / "drivers.csv").unlink()
     # How long each model took, for every archived origin that recorded it.
     timed = [pd.read_csv(p / "runtime.csv").assign(origin=p.name)
              for p in sorted(folder.parent.iterdir()) if (p / "runtime.csv").exists()]

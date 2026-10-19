@@ -12,6 +12,7 @@ Built in Shiny for Python for the Boston Public Health Commission.
 |---|---|
 | This week | Where is flu-like illness heading? A map you can play forward week by week, a ranked list, and a citywide line with forecast ranges |
 | Neighborhood | One neighborhood's next four weeks, with a model toggle, and this season against every season since 2017 or only the seasons the model trained on |
+| What's driving it | Why the graph model forecasts what it does: a waterfall from a usual week at this time of year to the forecast (this week's reading, recent and earlier weeks, weather, the calendar, neighbors), a map of how much each other neighborhood spills over, every neighborhood side by side, and the drivers week by week this season |
 | All neighborhoods | All 14 at once, sorted by how fast each is forecast to rise |
 | Track record | Would these forecasts have worked in past seasons, and are the 95% ranges honest? Plus the live 2026-27 scorecard |
 | Chicago | The same pipeline on Chicago's ZIP-level data, and both cities against their own typical peak |
@@ -41,12 +42,25 @@ first line is safe to re-run.
 
 ## Weekly update
 
-The app only reads `data/`. Each week, after the live forecast has run
-(`areaFluForecast/scripts/live_forecast.py`, on Explorer):
+The app only reads `data/`. Each week, in `areaFluForecast`, the live forecast
+loads the models trained once at the season start (nothing is retrained), then
+explains the graph model's forecast (only the new week is computed; earlier
+weeks are reused):
+
+```bash
+python scripts/live_forecast.py run --city boston --models-dir live/models/2026_27/boston
+python scripts/live_forecast.py explain --city boston --models-dir live/models/2026_27/boston
+```
+
+then, here:
 
 ```bash
 python publish.py          # copies the newest archived forecast per city into data/
 ```
+
+`explain` writes `drivers.csv` beside the archived forecast, and `publish.py`
+copies it for the What's driving it tab. The tab is left out when a forecast
+has no `drivers.csv` (one made by retraining, whose weights were not saved).
 
 `live_forecast.py` times every model as it runs and saves `runtime.csv` in each
 archived forecast; `publish.py` gathers them into `data/<city>/runtimes.csv` for

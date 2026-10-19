@@ -153,34 +153,6 @@ h4 { font-size: 15px; margin: 18px 0 6px; color: var(--text-secondary); }
 .scatter .tick { fill: var(--text-muted); font-size: 11px; }
 .scatter .axis { fill: var(--text-secondary); font-size: 12px; }
 
-/* Contribution waterfall. Same tokens as the scatter, so light and dark are
-   handled by the variable blocks above rather than by rules of its own.
-   Direction, the signed value and the label all carry the sign, so colour is
-   never the only thing saying whether a feature helped. */
-/* Scrolled rather than scaled below the min-width, the way .report is. The
-   bars carry thirty-character feature labels; shrunk to fit a phone the whole
-   chart is legible only as a shape. */
-.chart-scroll { overflow-x: auto; }
-.waterfall { width: 100%; min-width: 520px; max-width: 700px; height: auto;
-             background: var(--surface-1); border: 1px solid var(--border);
-             border-radius: 10px; }
-.waterfall .grid    { stroke: var(--border); stroke-width: 1; }
-.waterfall .connect { stroke: var(--border); stroke-width: 1; }
-.waterfall .endline { stroke: var(--text-muted); stroke-width: 1.5;
-                      stroke-dasharray: 4 4; opacity: 0.6; }
-.waterfall .bar        { stroke: var(--surface-1); stroke-width: 0.5; }
-.waterfall .bar-helps  { fill: var(--good); }
-.waterfall .bar-hurts  { fill: var(--critical); }
-/* The remainder bar is a summary, not a feature, so it sits back a little. */
-.waterfall .bar-rest      { fill-opacity: 0.5; }
-.waterfall .bar:hover     { fill-opacity: 0.75; }
-.waterfall .tick   { fill: var(--text-muted); font-size: 11px; }
-.waterfall .axis   { fill: var(--text-secondary); font-size: 12px; }
-.waterfall .flabel { fill: var(--text-secondary); font-size: 11.5px; }
-.waterfall .flabel-rest { fill: var(--text-muted); font-style: italic; }
-.waterfall .vlabel { fill: var(--text-muted); font-size: 11px;
-                     font-variant-numeric: tabular-nums; }
-
 /* The data grid and form controls render inside their own shadow-free
    wrappers; without these they keep Bootstrap's default ink and go black on
    the dark surface. */
@@ -339,6 +311,11 @@ h4 { font-size: 15px; margin: 18px 0 6px; color: var(--text-secondary); }
   --seq-0: #cde2fb; --seq-1: #9ec5f4; --seq-2: #6da7ec;
   --seq-3: #3987e5; --seq-4: #256abf; --seq-5: #104281;
   --na: #ecebe7;
+  /* Diverging, for what pushed a forecast: cool pulls it down, warm pushes it up,
+     grey is "same as a usual week". Poles validated as a pair (CVD and contrast). */
+  --dn3: #2a78d6; --dn2: #86b6ef; --dn1: #cde2fb; --d0: #f0efec;
+  --dp1: #fbdcda; --dp2: #f09a97; --dp3: #e34948;
+  --usual: #898781;
 }
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-bs-theme="light"])) {
@@ -347,6 +324,10 @@ h4 { font-size: 15px; margin: 18px 0 6px; color: var(--text-secondary); }
     --seq-0: #0d366b; --seq-1: #184f95; --seq-2: #256abf;
     --seq-3: #3987e5; --seq-4: #6da7ec; --seq-5: #b7d3f6;
     --na: #262624;
+
+    --dn3: #3987e5; --dn2: #24599c; --dn1: #1b3a5f; --d0: #383835;
+    --dp1: #5e2b2a; --dp2: #a8403f; --dp3: #e66767;
+    --usual: #94938a;
   }
 }
 :root[data-bs-theme="dark"] {
@@ -357,6 +338,9 @@ h4 { font-size: 15px; margin: 18px 0 6px; color: var(--text-secondary); }
   --seq-0: #0d366b; --seq-1: #184f95; --seq-2: #256abf;
   --seq-3: #3987e5; --seq-4: #6da7ec; --seq-5: #b7d3f6;
   --na: #262624;
+  --dn3: #3987e5; --dn2: #24599c; --dn1: #1b3a5f; --d0: #383835;
+  --dp1: #5e2b2a; --dp2: #a8403f; --dp3: #e66767;
+  --usual: #94938a;
 }
 
 .brand-mark { display: inline-block; width: 12px; height: 12px; border-radius: 3px;
@@ -559,3 +543,51 @@ h4 { font-size: 15px; margin: 18px 0 6px; color: var(--text-secondary); }
 .legend .sw-ring, .legend .sw-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 .legend .sw-ring { border: 2px solid var(--text-secondary); }
 .legend .sw-dot { background: var(--text-secondary); }
+
+/* ---- what's driving it ---- */
+.dn3 { fill: var(--dn3); background: var(--dn3); } .dn2 { fill: var(--dn2); background: var(--dn2); }
+.dn1 { fill: var(--dn1); background: var(--dn1); } .d0  { fill: var(--d0);  background: var(--d0); }
+.dp1 { fill: var(--dp1); background: var(--dp1); } .dp2 { fill: var(--dp2); background: var(--dp2); }
+.dp3 { fill: var(--dp3); background: var(--dp3); }
+.chart.waterfall { max-width: 760px; }
+.waterfall .wf-bar { stroke: none; }
+.waterfall .wf-up, .sw-box.wf-up { fill: var(--dp3); background: var(--dp3); }
+.waterfall .wf-down, .sw-box.wf-down { fill: var(--dn3); background: var(--dn3); }
+.waterfall .wf-base { fill: var(--usual); fill-opacity: 0.55; }
+.waterfall .wf-total { fill: var(--text-primary); }
+.waterfall .wf-link { stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 2 2; }
+.waterfall .wf-val { fill: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
+.waterfall .wf-sub { fill: var(--text-muted); font-size: 10.5px; }
+.waterfall .strong { fill: var(--text-primary); font-weight: 650; }
+.waterfall .wf-whisker line { stroke: var(--surface-1); stroke-width: 2; }
+.waterfall .wf-row:hover .wf-bar, .waterfall .wf-row.hover .wf-bar { opacity: 0.8; }
+.legend .sw-box { width: 12px; height: 10px; border-radius: 2px; display: inline-block; }
+.chart.spill { max-height: 460px; }
+.spill .spill-target { fill: var(--surface-0); }
+.spill .spill-arrow { fill: none; stroke-linecap: round; pointer-events: none; opacity: 0.9; }
+.spill .spill-arrow.up { stroke: var(--dp3); } .spill .head-up { fill: var(--dp3); }
+.spill .spill-arrow.down { stroke: var(--dn3); } .spill .head-down { fill: var(--dn3); }
+.spill .spill-dot { fill: var(--text-primary); stroke: var(--surface-1); stroke-width: 2; pointer-events: none; }
+.matrix .col-head { fill: var(--text-muted); font-size: 11px; }
+.matrix .mx-row { cursor: pointer; outline: none; }
+.matrix .mx-hit { fill: transparent; }
+.matrix .mx-row:hover .mx-hit, .matrix .mx-row:focus .mx-hit { fill: var(--surface-0); }
+.matrix .mx-row.selected .mx-hit { fill: var(--surface-0); stroke: var(--text-primary); stroke-width: 1.5; }
+.matrix .mx-row.selected .row-label { fill: var(--text-primary); font-weight: 650; }
+.chart .mx-cell { stroke: var(--surface-1); stroke-width: 0; }
+.chart .mx-cell:hover, .chart .mx-cell.hover { stroke: var(--text-primary); stroke-width: 1.5; }
+.matrix .mx-total { fill: var(--text-primary); font-size: 12px; font-variant-numeric: tabular-nums; }
+.matrix .mx-delta { fill: var(--text-muted); }
+.timeline .line.usual { stroke: var(--usual); stroke-dasharray: 5 4; }
+.timeline .line.forecast { stroke: var(--text-primary); }
+.timeline .dot.actual { fill: var(--surface-1); stroke: var(--text-secondary); stroke-width: 1.5; }
+.chart .direct.muted { fill: var(--text-muted); font-weight: 500; }
+.timeline .col.latest .guide { opacity: 0.5; }
+.sw.usual { background: repeating-linear-gradient(90deg, var(--usual) 0 5px, transparent 5px 8px); }
+.chart.matrix, .chart.timeline { max-width: 900px; }
+@media (max-width: 600px) {
+  .chart.waterfall, .chart.matrix, .chart.timeline { min-width: 600px; }
+}
+.card { overflow-x: auto; }
+.teaser { font-size: 13.5px; color: var(--text-secondary); max-width: 80ch; margin: 2px 0 6px; }
+.teaser a { color: var(--s1); font-weight: 600; white-space: nowrap; }
