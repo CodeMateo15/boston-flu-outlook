@@ -2,7 +2,7 @@
   "city": "chicago",
   "label": "Chicago",
   "season": "2026_27",
-  "origin": "2026-10-04",
+  "origin": "2026-10-11",
   "horizons": [
     1,
     2,
@@ -26,19 +26,58 @@
     "horizon": 1,
     "train_targets": [
       "2020-01-26",
-      "2025-10-05"
+      "2025-06-22"
     ],
     "validation_targets": [
-      "2025-10-12",
-      "2026-10-04"
+      "2025-06-29",
+      "2026-05-31"
     ]
   },
-  "frozen_models": null,
-  "issued": "2026-10-17T14:57:19",
+  "frozen_models": {
+    "city": "chicago",
+    "season": "2026_27",
+    "anchor": "2026-06-01",
+    "trained_through": "2026-10-11",
+    "models": [
+      "gnn_st",
+      "lstm",
+      "colagnn",
+      "arima"
+    ],
+    "trained": {
+      "gnn_st": "2026-10-11",
+      "lstm": "2026-10-11",
+      "colagnn": "2026-10-11",
+      "arima": "2026-10-11"
+    },
+    "package_version": "1.2.0",
+    "quick": false,
+    "files": {
+      "arima_h1.pt": "77740e64688e6c3e1f45047745dff443cdff2d26f938612f01cfac1d66154c9c",
+      "arima_h2.pt": "910f55ffe62a9be8ad817632f00c29ff045a22be2b55ca000267f886f2ad79ce",
+      "arima_h3.pt": "2c34c122d3f18a24ac77a27b479641b96be104b644d05844a71da3d88959f6e9",
+      "arima_h4.pt": "62b99478dd2c9153b6e4291ef684737907ea1f3a94bbc8bdb253dfc01d59cd44",
+      "colagnn_h1.pt": "9e83a80ffd70a3b91ef039d975f20c372a393d1d101645e276993c91b2049ba9",
+      "colagnn_h2.pt": "0b10641937cba51eb745c875abb90bc51ebdc1ae64074c8f349e061a910d37be",
+      "colagnn_h3.pt": "e2c044c96c55ffbb9fcc92b14ef1af7eb28e79e85b46bf5d8dadffa254580b87",
+      "colagnn_h4.pt": "a8aadb4a3de124513211902b8369a56fe471d99e4080a7230e3eb9321106350d",
+      "gnn_st_h1.pt": "6d33093ebdac608bd8c1e31f9fdf34dbe6ca9d7c6b129c4443f2a4821cbbe6d0",
+      "gnn_st_h2.pt": "06efcec59a03465b6eca0367a29c9a3e9b6fd37e16a3e9db81838e59626bd71c",
+      "gnn_st_h3.pt": "3e986f6715f8c1b324e2d76bfd5d51df52b8ba61a642ce96c7eba08b9ec4224d",
+      "gnn_st_h4.pt": "dae321ba481a4d7618df1a709d8eba5797c096f5a78f60fc7dddc1ff07ffa6a3",
+      "lstm_h1.pt": "c08f89630dbf291e3b4527867339c25d9c04c2a457c441d16628ea24c77b828e",
+      "lstm_h2.pt": "080cdeecb090deccdf06b3bcbc736a7af90abf5834105f17241b12cb96360fff",
+      "lstm_h3.pt": "a1b15f24aa20666ad4aa504f3f8731a4d98db691fd8e422aa4ad5334c81b999a",
+      "lstm_h4.pt": "a437062dc791b4d0dd6a7bb3ec8cce1db2883329d43aba0c9009a80dc1e1d886"
+    },
+    "updated": "2026-10-24T04:50:35"
+  },
+  "issued": "2026-10-24T08:06:43",
   "quick": false,
   "archived_origins": [
     "2026-09-20",
     "2026-09-27",
-    "2026-10-04"
+    "2026-10-04",
+    "2026-10-11"
   ]
 }
