@@ -157,7 +157,7 @@ def map_block(city: D.CityData, h: int, selected: str | None, input_id: str):
         v = values.get(area, np.nan)
         lines = [short(city, area)]
         if h == 0:
-            lines.append(f"Reported {date(city.origin)}: {city.fmt(v)}")
+            lines.append(f"Reported {week_span(city.origin)}: {city.fmt(v)}")
         else:
             r = rows[(rows["area"] == area) & (rows["horizon"] == h)]
             if len(r):
@@ -278,7 +278,7 @@ def city_tiles(city: D.CityData):
     words = city.info["areas_word"]
     return ui.div(
         tile("Citywide now", city.fmt(now),
-             f"average of {len(city.areas)} {words}, week of {date(city.origin)}"),
+             f"average of {len(city.areas)} {words}, week of {week_span(city.origin)}"),
         tile(f"In {hmax} weeks", f"{arrow} {city.fmt(ahead['predicted'])}",
              f"{change * 100:+.0f}% · 95% range {city.fmt(ahead['lower'])}–{city.fmt(ahead['upper'])}"
              if np.isfinite(change) else ""),
