@@ -42,7 +42,26 @@ first line is safe to re-run.
 
 ## Weekly update
 
-The app only reads `data/`. Each week, in `areaFluForecast`, the live forecast
+Drop the new BPHC CSVs into `~/GNN-Influenza-Boston/Data/BPHC Flu Data/`, then
+from this folder:
+
+```bash
+.venv/bin/python weekly_update.py                         # Boston
+.venv/bin/python weekly_update.py --city chicago          # Chicago (CDPH posts Fridays)
+.venv/bin/python weekly_update.py --city boston chicago --commit --push
+```
+
+It refreshes the weather (and downloads Chicago's data), exports, forecasts from
+the saved models, explains, scores and publishes: the steps below. A city whose
+newest week is already forecast is skipped. It commits or pushes only when asked,
+and saves its output to `logs/`. Boston takes about 5 minutes, Chicago about 10.
+
+Each run also rewrites `DATA_STATUS.md`: the newest week each source has (the BPHC
+CSVs on disk; the Chicago portal, checked live), the newest forecast, and what the
+app shows. `.venv/bin/python weekly_update.py --status` refreshes it without
+running anything else, so you can see whether there's a new week before you start.
+
+The steps it runs, by hand: the app only reads `data/`. Each week, in `areaFluForecast`, the live forecast
 loads the models trained once at the season start (nothing is retrained), then
 explains the graph model's forecast (only the new week is computed; earlier
 weeks are reused):
