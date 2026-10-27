@@ -843,7 +843,9 @@ def server(input, output, session):
 
     @render.ui
     def sev_overview():
-        return severity_overview(B, sev_pick())
+        line = input.sev_line() if "sev_line" in input else "IT50"
+        h = int(input.sev_h()) if "sev_h" in input else max(B.horizons)
+        return severity_overview(B, sev_pick(), line, h)
 
     @render.ui
     def sev_detail():
@@ -1179,19 +1181,22 @@ def skipped_notes(table: pd.DataFrame) -> dict[str, str]:
             for r in table.itertuples() if r.role == "skipped"}
 
 
-def severity_overview(city: D.CityData, selected: str):
+def severity_overview(city: D.CityData, selected: str, line: str = "IT50",
+                      horizon: int | None = None):
     """Every area this season against its own lines, then every area and season."""
-    hmax = max(city.horizons)
-    target = week_span(city.rows(D.PRIMARY)["target_date"].max())
+    horizon = horizon if horizon in city.horizons else max(city.horizons)
+    name = dict(C.SEV_LINES)[line].lower()
+    target = week_span(city.rows(D.PRIMARY).query("horizon == @horizon")["target_date"].max())
     rows = []
     for a in city.areas:
         its = city.severity_thresholds(a)["its"]
         t = city.season_severity(a)
         now = t[t["role"] == "current"].iloc[0]
-        p = city.exceed_prob(its["IT50"], area=a).get(hmax, np.nan)
-        rows.append((now.peak / its["IT50"], a, now, its, p))
+        p = city.exceed_prob(its[line], area=a).get(horizon, np.nan)
+        week = city.level(a, city.history[a].dropna().iloc[-1])
+        rows.append((now.peak / its[line], a, now, its, p, week))
     trs = []
-    for share, a, now, its, p in sorted(rows, key=lambda r: -r[0]):
+    for share, a, now, its, p, week in sorted(rows, key=lambda r: -r[0]):
         status = D.LEVEL_STATUS[now.cls]
         trs.append(ui.tags.tr(
             ui.tags.td(short(city, a)), ui.tags.td(city.fmt(now.peak)),
@@ -1200,10 +1205,14 @@ def severity_overview(city: D.CityData, selected: str):
                                      class_=f"share-track sev-{status}"),
                               ui.span(f"{share:.0%}"), class_="share")),
             ui.tags.td(level_pill(now.cls)),
+            ui.tags.td(level_pill(week) if week else "—"),
             ui.tags.td(" · ".join(city.fmt(its[k]) for k, _ in C.SEV_LINES)),
             ui.tags.td(C.chance(p)),
             class_="selected" if a == selected else None,
             **{"data-area": a, "data-input": "sev_click", "tabindex": "0"}))
+    # Areas whose latest week rates above their season so far: the two scales side by side.
+    split = [short(city, a) for _, a, now, _, _, week in rows
+             if week and D.LEVELS.index(week) > D.LEVELS.index(now.cls)]
     tables = {a: city.season_severity(a) for a in sorted(city.areas, key=lambda a: short(city, a))}
     # Which past season rated high or worse in the most areas, against their own lines.
     worst = (pd.concat([t.assign(area=a) for a, t in tables.items()])
@@ -1216,12 +1225,22 @@ def severity_overview(city: D.CityData, selected: str):
         ui.div(ui.tags.table(
             ui.tags.thead(ui.tags.tr(*[ui.tags.th(t) for t in (
                 city.info["area_word"].capitalize(), "Highest week so far",
-                "Share of its moderate line", "So far", "Its lines (moderate · high · very high)",
-                f"Chance above its moderate line, week of {target}")])),
+                f"Share of its {name} line", "Season so far", "This week's level",
+                "Its lines (moderate · high · very high)",
+                f"Chance above its {name} line, week of {target}")])),
             ui.tags.tbody(*trs), class_="score-table sev-table"), class_="table-scroll"),
-        ui.p("Sorted by how close each is to its own moderate line. The chances come straight "
+        ui.p(f"Sorted by how close each is to its own {name} line. The chances come straight "
              f"from each {city.info['area_word']}'s forecast ranges, so they need no averaging.",
              class_="note"),
+        ui.p(ui.HTML(
+            "<strong>Season so far and this week's level are different scales.</strong> "
+            "This week's level is the pill on the other tabs: the latest week against that "
+            f"{city.info['area_word']}'s usual flu-season weeks, where any week above the middle "
+            "one is already moderate. Season severity puts the season's highest week against "
+            "past seasons' <em>highest</em> weeks, a much higher bar. So a "
+            f"{city.info['area_word']} can have a moderate week inside a season that is still "
+            "low-severity" + (f", as {' and '.join(split)} {'does' if len(split) == 1 else 'do'} "
+                              "now." if split else ".")), class_="note"),
         ui.h4("Every season, every " + city.info["area_word"]),
         ui.p(f"Each cell is one season against that {city.info['area_word']}'s own lines "
              "(L low, M moderate, H high, VH very high); the last column is this season so far. "
@@ -1317,8 +1336,10 @@ def severity_panel(city: D.CityData, m: str, area: str | None = None):
              "climbs, against the spread of past seasons' worst weeks. The lines are the ones "
              "CDC's method would draw from Boston's own history. The top of the page rates the "
              f"city as a whole (the average of its {len(city.areas)} {city.info['areas_word']}); "
-             f"further down, each {city.info['area_word']} is rated against its own history.",
-             class_="blurb"),
+             f"further down, each {city.info['area_word']} is rated against its own history. "
+             "Season severity is not the same scale as the Low to Very high level on the other "
+             "tabs, which rates one week against usual flu-season weeks: a week can be moderate "
+             "while the season is still low-severity.", class_="blurb"),
         ui.p(ui.HTML(head), class_="callout"),
         ui.div(
             tile("Season so far", ui.span(now.cls, class_=f"pill pill-{D.LEVEL_STATUS[now.cls]}"),
@@ -1367,6 +1388,14 @@ def severity_panel(city: D.CityData, m: str, area: str | None = None):
                  f"rate some {city.info['areas_word']} high every year and others never; like the "
                  "levels on the other tabs, each is rated against itself. Click a row to see it "
                  "below.", class_="blurb"),
+            ui.div(ui.input_select("sev_line", "Chance above its",
+                                   {k: f"{n.lower()} line" for k, n in C.SEV_LINES}),
+                   ui.input_select("sev_h", "Week",
+                                   {str(h): f"{h} week{'s' if h > 1 else ''} ahead "
+                                            f"({week_span(d)})"
+                                    for h, d in zip(fc.index, fc["target_date"])},
+                                   selected=str(hmax)),
+                   class_="controls"),
             ui.output_ui("sev_overview"), class_="chart-card"),
         ui.div(
             ui.div(ui.input_select("sev_area", city.info["area_word"].capitalize(),
