@@ -623,6 +623,8 @@ def server(input, output, session):
                      "the neighbors matter more by week four.", class_="note"),
                 ui.output_ui("drv_body"),
                 value="drivers") if B.has_drivers else None,
+            "severity": ui.nav_panel(V.TAB_TITLES["severity"], severity_panel(B, m),
+                                     value="severity"),
             "all": ui.nav_panel(
                 V.TAB_TITLES["all"],
                 preview_banner(B),
@@ -1004,6 +1006,259 @@ def live_block(city: D.CityData):
                                                 "Inside 50% range", "Inside 95% range")])),
                       ui.tags.tbody(*rows), class_="score-table"), class_="table-scroll"),
                   class_="chart-card")
+
+
+# --- how severe the season is ------------------------------------------------------------
+
+# Past seasons that stand in for this one, in the series colours the ribbons use.
+ANALOG_CLASS = ("s2", "s3", "s4")
+
+
+def month_part(d) -> str:
+    d = pd.Timestamp(d)
+    part = "early " if d.day <= 10 else "mid-" if d.day <= 20 else "late "
+    return part + d.strftime("%b")
+
+
+def severity_rules(city: D.CityData, its: dict[str, float]):
+    cuts = [its[k] for k, _ in C.SEV_LINES]
+    spans = [f"below {city.fmt(cuts[0])}", f"{city.fmt(cuts[0])} to {city.fmt(cuts[1])}",
+             f"{city.fmt(cuts[1])} to {city.fmt(cuts[2])}", f"{city.fmt(cuts[2])} and up"]
+    return ui.div(*[ui.span(level_pill(lvl), " ", span, class_="rule")
+                    for lvl, span in zip(D.LEVELS, spans)], class_="rules")
+
+
+def formula_block(city: D.CityData, th: dict, table: pd.DataFrame, analyst: bool):
+    its, mu, sigma, n = th["its"], th["mu"], th["sigma"], th["n"]
+    left_out = [f"{r.season} ({'flu did not circulate' if r.season == '2020-21' else f'only {r.weeks} weeks of data'})"
+                for r in table.itertuples() if r.role == "skipped"]
+    left_out.append(f"{city.season_label(city.origin)} (still running)")
+    peaks = table.loc[table["role"] == "used", "peak"]
+    chips = [ui.span(ui.tags.strong(k), " " + " · ".join(city.fmt(v) for v in t), class_="chip")
+             for k, t in th["top"].items()]
+    share = {"IT50": "1 in 2", "IT90": "1 in 10", "IT98": "1 in 50"}
+    lines = []
+    for key, name in C.SEV_LINES:
+        z = D.SEVERITY_Z[key]
+        lines.append(ui.tags.tr(
+            ui.tags.td(ui.HTML(f"IT<sub>{key[2:]}</sub>")), ui.tags.td(f"{name} from"),
+            ui.tags.td(f"{z:.2f}"),
+            ui.tags.td(ui.HTML(f"e<sup>{mu:.3f} + {z:.2f} × {sigma:.3f}</sup> = "
+                               f"<strong>{city.fmt(its[key])}</strong>")),
+            ui.tags.td(f"{int((peaks >= its[key]).sum())} of {len(peaks)} "
+                       f"(about {share[key]} expected)")))
+    analyst_notes = None
+    if analyst:
+        narrow = np.exp(mu + D.SEVERITY_Z["IT90"] * sigma / np.sqrt(n))
+        above = int((peaks >= narrow).sum())
+        analyst_notes = ui.div(ui.h4("Method notes"), ui.tags.ul(
+            ui.tags.li(f"z = Φ⁻¹(p) for p = 0.50, 0.90, 0.98. σ is the sample SD (n − 1) of the "
+                       f"{n} pooled logs."),
+            ui.tags.li("The lines are ranges for a single season's top weeks, not for their mean. "
+                       f"With σ/√n instead, the high line would sit at {city.fmt(narrow)} and "
+                       f"{above} of the {len(peaks)} past seasons would rate high or worse."),
+            ui.tags.li("CDC applies this to three indicators (outpatient ILI, hospitalizations, "
+                       "deaths) and takes the class at least two agree on. BPHC publishes only "
+                       "ED visits, so this is the one-indicator version."),
+            ui.tags.li("A season's top three weeks enter as they are, not smoothed, and the "
+                       "seasons are weighted equally (no recency weighting).")),
+            class_="note-card")
+    return ui.div(
+        ui.h3("The formula"),
+        ui.p("CDC rates flu seasons with intensity thresholds from the moving epidemic method "
+             "(Biggerstaff et al., 2018). Here it is step by step, with this city's numbers in.",
+             class_="blurb"),
+        ui.tags.ol(
+            ui.tags.li(ui.tags.strong("Take each past season's three highest weeks"),
+                       f", citywide: {n} values from {len(th['top'])} seasons. Left out: "
+                       f"{', '.join(left_out[:-1])}{' and ' if len(left_out) > 1 else ''}"
+                       f"{left_out[-1]}.",
+                       ui.div(*chips, class_="fresh")),
+            ui.tags.li(ui.tags.strong("Average them on a log scale."),
+                       " Flu seasons differ by multiples, not by fixed amounts, so the logs "
+                       "are averaged: the result is the geometric mean.",
+                       ui.div(ui.HTML(f"<var>μ</var> = mean of ln <var>x</var><sub>i</sub> = "
+                                      f"{mu:.3f} &nbsp;&nbsp;→&nbsp;&nbsp; e<sup><var>μ</var></sup>"
+                                      f" = {city.fmt(np.exp(mu))}"), class_="formula"),
+                       ui.div(ui.HTML(f"<var>σ</var> = SD of ln <var>x</var><sub>i</sub> = "
+                                      f"{sigma:.3f}"), class_="formula")),
+            ui.tags.li(ui.tags.strong("Set three lines above the geometric mean."),
+                       " Each is the upper end of a one-sided 50%, 90% or 98% range for a "
+                       "season's top weeks:",
+                       ui.div(ui.HTML("IT<sub><var>p</var></sub> = e<sup><var>μ</var> + "
+                                      "<var>z</var><sub><var>p</var></sub><var>σ</var></sup>"),
+                              class_="formula"),
+                       ui.div(ui.tags.table(
+                           ui.tags.thead(ui.tags.tr(*[ui.tags.th(t) for t in (
+                               "Line", "Class", "z", "Worked out", "Seasons above it")])),
+                           ui.tags.tbody(*lines), class_="score-table"), class_="table-scroll")),
+            ui.tags.li(ui.tags.strong("Rate the season by its highest week."),
+                       severity_rules(city, its)),
+            class_="steps"),
+        analyst_notes, class_="chart-card")
+
+
+def analogs_block(city: D.CityData, analogs: list[dict], current: str, table: pd.DataFrame):
+    start = pd.Timestamp(year=int(current[:4]), month=8, day=1)
+    fc = city.citywide_forecast(D.PRIMARY)
+    last = week_span(fc["target_date"].max())
+    peak_dates = table.set_index("season")["peak_date"]
+    classes = sorted({a["cls"] for a in analogs}, key=D.LEVELS.index)
+    cards = []
+    for a, cls in zip(analogs, ANALOG_CLASS):
+        when = peak_dates[a["season"]]
+        cards.append(ui.div(
+            ui.div(ui.span(class_=f"sw {cls}"), ui.span(a["season"], class_="analog-name"),
+                   class_="analog-head"),
+            ui.p(f"Typically {np.expm1(a['rmse']):.0%} apart over the {a['weeks']} weeks so far, "
+                 "forecast included.", class_="analog-sub"),
+            ui.p(ui.HTML(f"Went on to peak at <strong>{city.fmt(a['peak'])}</strong> in "
+                         f"{month_part(when)} "), level_pill(a["cls"])),
+            ui.p(f"In the week matching {last}, it stood at {city.fmt(a['ahead'])}.",
+                 class_="analog-sub"),
+            class_="analog"))
+    seasons = city.seasons()
+    pts = [((pd.Timestamp(r.target_date) - start).days // 7, r.predicted) for r in fc.itertuples()]
+    svg = C.ribbons(seasons, current, pts, unit=city.info["unit_short"], fmt=city.fmt,
+                    highlight={a["season"]: cls for a, cls in zip(analogs, ANALOG_CLASS)})
+    return ui.div(
+        ui.h3("Which past season does this one look like?"),
+        ui.p("The past seasons whose curve sits closest to this one's so far, with the graph "
+             "model's next four weeks added on. Closeness is measured on a log scale, so being "
+             "twice as high counts the same in October as in January.", class_="blurb"),
+        ui.div(*cards, class_="analogs"),
+        ui.div(ui.span(ui.span(class_="sw s1"), current, class_="key"),
+               *[ui.span(ui.span(class_=f"sw {cls}"), a["season"], class_="key")
+                 for a, cls in zip(analogs, ANALOG_CLASS)],
+               ui.span(ui.span(class_="sw past"), "other seasons", class_="key"), class_="legend"),
+        ui.HTML(svg),
+        ui.p("Early in the season every curve is low and they look alike, so a close match "
+             "says little about the peak to come"
+             + (f": the {['', 'one', 'two', 'three'][len(analogs)]} closest went on to be "
+                f"{', '.join(c.lower() for c in classes[:-1])} and {classes[-1].lower()} seasons"
+                if len(classes) > 1 else "")
+             + ". Read these as a reference, not a forecast.", class_="note"),
+        class_="chart-card")
+
+
+def severity_panel(city: D.CityData, m: str):
+    th = city.severity_thresholds()
+    its = th["its"]
+    table = city.season_severity()
+    now = table[table["role"] == "current"].iloc[0]
+    unit = city.info["unit_short"]
+    fc = city.citywide_forecast(D.PRIMARY).set_index("horizon")
+    hmax = max(city.horizons)
+    probs = pd.DataFrame({k: city.exceed_prob(v) for k, v in its.items()})
+    analogs = city.analogs()
+    used = table[table["role"] == "used"]
+    start = pd.Timestamp(year=int(now.season[:4]), month=8, day=1)
+    # Past peaks moved onto this season's calendar, to say when a peak usually comes.
+    offsets = [(d - pd.Timestamp(year=int(s[:4]), month=8, day=1)).days
+               for s, d in zip(used["season"], used["peak_date"])]
+    early, late = (start + pd.Timedelta(days=d) for d in (min(offsets), max(offsets)))
+
+    # The next line above this season's highest week so far, and the chance of crossing it.
+    nxt = next(((k, name) for k, name in C.SEV_LINES if now.peak < its[k]), None)
+    head = (f"So far, {now.season} is a <strong>{now.cls.lower()}-severity</strong> season in "
+            f"{city.label}: its highest week yet ({city.fmt(now.peak)} {unit}, week of "
+            f"{week_span(now.peak_date)})")
+    if nxt:
+        key, name = nxt
+        p = probs[key].loc[hmax]
+        head += (f" is {now.peak / its[key]:.0%} of the {name.lower()} line "
+                 f"({city.fmt(its[key])}). The graph model gives a <strong>{C.chance(p)} "
+                 f"chance</strong> that the week of {week_span(fc.loc[hmax, 'target_date'])} "
+                 "is above it.")
+    else:
+        head += " is already above the very-high line."
+
+    top = fc.loc[fc["predicted"].idxmax()]
+    notes = {r.season: ("Left out of the lines: flu did not circulate" if r.season == "2020-21"
+                        else f"Left out of the lines: only {r.weeks} weeks of data")
+             for r in table.itertuples() if r.role == "skipped"}
+    strip = C.severity_strip(table, its, fmt=city.fmt, unit=unit, notes=notes,
+                             outlook=(top["predicted"], top["lower"], top["upper"],
+                                      f"week of {week_span(top['target_date'])}"))
+    weeks = [week_span(d) for d in fc["target_date"]]
+    closest = analogs[0] if analogs else None
+    chi_its = CHI.severity_thresholds()["its"] if CHI else None
+    return ui.div(
+        preview_banner(city),
+        ui.h2("How bad is this season?"),
+        ui.p("Severity rates a whole flu season, not a single week: how high its worst week "
+             "climbs, against the spread of past seasons' worst weeks. The lines are the ones "
+             "CDC's method would draw from Boston's own history.", class_="blurb"),
+        ui.p(ui.HTML(head), class_="callout"),
+        ui.div(
+            tile("Season so far", ui.span(now.cls, class_=f"pill pill-{D.LEVEL_STATUS[now.cls]}"),
+                 f"rated on its highest week yet, {city.fmt(now.peak)}"),
+            tile("Moderate line", city.fmt(its["IT50"]),
+                 f"high from {city.fmt(its['IT90'])}, very high from {city.fmt(its['IT98'])}"),
+            tile(f"Chance above {nxt[1].lower()}" if nxt else "Above every line",
+                 C.chance(probs[nxt[0]].loc[hmax]) if nxt else "—",
+                 f"week of {week_span(fc.loc[hmax, 'target_date'])}, graph model"),
+            tile("Closest past season", closest["season"] if closest else "—",
+                 f"peaked at {city.fmt(closest['peak'])} ({closest['cls'].lower()})"
+                 if closest else ""),
+            class_="tiles"),
+        ui.div(
+            ui.h3("Every season against the lines"),
+            ui.p(f"Each bar runs to a season's highest week, citywide. The shaded zones are the "
+                 f"four classes, split at the lines worked out below. Grey seasons are left out "
+                 f"of the lines; hover for why. {now.season}'s bar is its peak so far; the hollow "
+                 f"part runs to the graph model's highest forecast week, with its 95% range.",
+                 class_="blurb"),
+            ui.div(ui.span(ui.span(class_="sw-box sev-ahead"), "forecast high", class_="key"),
+                   ui.span(ui.span(class_="sw-box sev-skip"), "left out of the lines",
+                           class_="key"), class_="legend"),
+            ui.HTML(strip),
+            ui.p(f"In the seasons behind the lines, the citywide peak came between "
+                 f"{month_part(early)} and {month_part(late)}, so a season's class is rarely "
+                 "settled before the new year.", class_="note"),
+            class_="chart-card"),
+        formula_block(city, th, table, m == "analyst"),
+        ui.div(
+            ui.h3("Chance of crossing each line"),
+            ui.p("For each forecast week, the chance the citywide average lands above each "
+                 "line, read off the graph model's forecast ranges. Each is the chance for that "
+                 "week on its own, not for any of the four: that would need the weeks' joint "
+                 "forecast, which the model doesn't give.", class_="blurb"),
+            ui.HTML(C.odds_grid(probs, weeks)),
+            ui.p("The model's ranges stop at 1% and 99%, so “<1%” means below the lowest range "
+                 "it gives. The citywide range averages the neighborhoods' ranges, which is "
+                 "wider than the true range of their average, so if anything these chances run "
+                 "high.", class_="note"),
+            class_="chart-card"),
+        analogs_block(city, analogs, now.season, table) if analogs else None,
+        ui.div(
+            ui.h3("How to read this"),
+            ui.tags.ul(
+                ui.tags.li("Severity belongs to the whole season and is set by its highest week. "
+                           "The levels on the other tabs (Low to Very high) rate one week against "
+                           "that neighborhood's usual flu-season weeks, so a very high week can "
+                           "sit inside a moderate season."),
+                ui.tags.li(f"“Against a typical peak” on This week compares the latest week with "
+                           f"the median past peak ({city.fmt(city.typical_peak())}). The severity "
+                           "lines use the spread of past peaks as well as their middle."),
+                ui.tags.li("One indicator only: ED visits for flu-like illness. CDC also weighs "
+                           "hospitalizations and deaths, which BPHC does not publish by "
+                           "neighborhood, so strictly this measures how intense the season is in "
+                           "emergency departments, not how sick people get."),
+                *([ui.tags.li(f"Not drawn for Chicago: its activity level is capped at "
+                              f"{CHI.info['cap']}, so the same method puts the very-high line at "
+                              f"{CHI.fmt(chi_its['IT98'])}, past the top of the scale, and the "
+                              f"high line at {CHI.fmt(chi_its['IT90'])}, which needs nearly every "
+                              "ZIP code at the cap at once.")] if chi_its else []),
+                ui.tags.li("Method: M. Biggerstaff et al., “Systematic assessment of multiple "
+                           "routine and near real-time indicators to classify the severity of "
+                           "influenza seasons and pandemics in the United States,” American "
+                           "Journal of Epidemiology 187(5), 2018, ",
+                           ui.tags.a("doi:10.1093/aje/kwx334",
+                                     href="https://doi.org/10.1093/aje/kwx334", target="_blank"),
+                           ".")),
+            class_="card"),
+    )
 
 
 def runtime_block(city: D.CityData):

@@ -591,3 +591,59 @@ h4 { font-size: 15px; margin: 18px 0 6px; color: var(--text-secondary); }
 .card { overflow-x: auto; }
 .teaser { font-size: 13.5px; color: var(--text-secondary); max-width: 80ch; margin: 2px 0 6px; }
 .teaser a { color: var(--s1); font-weight: 600; white-space: nowrap; }
+
+/* ---- severity ---- */
+/* One custom property per class, so the zone, the bar, the odds cell and the
+   pill all draw "High" in the same status colour. */
+.sev-good { --sev: var(--good); } .sev-warning { --sev: var(--warning); }
+.sev-serious { --sev: var(--serious); } .sev-critical { --sev: var(--critical); }
+.chart.severity { max-width: 900px; }
+.chart.odds { max-width: 640px; }
+.severity .sev-zone { fill: var(--sev); fill-opacity: 0.09; }
+.severity .sev-name { fill: var(--text-secondary); font-weight: 600; }
+.severity .sev-line { stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 4 3; }
+.chart .tick.strong { fill: var(--text-primary); font-weight: 600; }
+.severity .sev-bar { fill: var(--sev); }
+.severity .sev-bar.sev-skip { fill: var(--past); }
+.severity .sev-ahead { fill: none; stroke: var(--text-secondary); stroke-width: 1.5; stroke-dasharray: 3 2; }
+.severity .sev-whisker line { stroke: var(--text-secondary); stroke-width: 1.5; }
+.severity .sev-val { fill: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
+.severity .sev-row.now .sev-val, .severity .row-label.strong { fill: var(--text-primary); font-weight: 650; }
+.severity .sev-row:hover .sev-bar, .severity .sev-row.hover .sev-bar { opacity: 0.8; }
+.legend .sw-box.sev-ahead { background: transparent; border: 1.5px dashed var(--text-secondary); }
+.legend .sw-box.sev-skip { background: var(--past); }
+.odds .odds-cell { fill: var(--sev); stroke: var(--border); stroke-width: 1; }
+.odds .odds-val { fill: var(--text-primary); font-size: 13px; font-weight: 600;
+                  font-variant-numeric: tabular-nums; }
+@media (max-width: 600px) {
+  .chart.severity { min-width: 600px; }
+}
+
+/* The formula, step by step. */
+.steps { margin: 6px 0 0; padding-left: 22px; max-width: 900px; }
+.steps > li { margin: 0 0 16px; font-size: 14px; line-height: 1.55; color: var(--text-secondary); }
+.steps > li > strong { color: var(--text-primary); }
+.steps .fresh { margin-top: 8px; }
+.steps .score-table { max-width: 720px; margin-top: 8px; }
+.formula {
+  display: inline-block; margin: 8px 12px 0 0; padding: 6px 12px; border-radius: 8px;
+  background: var(--surface-0); border: 1px solid var(--border); color: var(--text-primary);
+  font-family: "Cambria Math", "STIX Two Math", Georgia, serif; font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+.formula var { font-style: italic; }
+.formula sup, .formula sub { font-size: 0.72em; }
+.rules { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 8px; }
+.rule { font-size: 13.5px; color: var(--text-secondary); white-space: nowrap;
+        font-variant-numeric: tabular-nums; }
+
+/* Past seasons that look like this one. */
+.analogs { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+           gap: 12px; margin: 4px 0 10px; }
+.analog { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+          background: var(--surface-0); }
+.analog p { margin: 4px 0 0; font-size: 13.5px; }
+.analog-head { display: flex; align-items: center; gap: 8px; }
+.analog-head .sw { width: 16px; height: 3px; border-radius: 2px; display: inline-block; }
+.analog-name { font-weight: 650; font-size: 15px; }
+.analog-sub { color: var(--text-muted); font-size: 12.5px !important; }

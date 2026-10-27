@@ -8,12 +8,13 @@ and adds the numbers behind them (scores, p-values, the full forecast table).
 MODES = {"briefing": "Health department briefing", "analyst": "Analyst"}
 
 TABS = {
-    "briefing": ["outlook", "detail", "drivers", "all", "record", "chicago", "how"],
-    "analyst": ["outlook", "detail", "drivers", "all", "record", "chicago", "table", "how"],
+    "briefing": ["outlook", "detail", "drivers", "severity", "all", "record", "chicago", "how"],
+    "analyst": ["outlook", "detail", "drivers", "severity", "all", "record", "chicago", "table", "how"],
 }
 
 TAB_TITLES = {
     "outlook": "This week", "detail": "Neighborhood", "drivers": "What's driving it",
+    "severity": "Severity",
     "all": "All neighborhoods",
     "record": "Track record", "chicago": "Chicago", "table": "Forecast table",
     "how": "How it works",

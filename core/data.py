@@ -66,6 +66,9 @@ DRIVERS = OWN_DRIVERS + ("neighbor",)
 
 LEVELS = ("Low", "Moderate", "High", "Very high")
 LEVEL_STATUS = {"Low": "good", "Moderate": "warning", "High": "serious", "Very high": "critical"}
+# Season severity lines: the upper limits of one-sided 50/90/98% intervals,
+# z = Phi^-1(p). A season peaking above IT50 is moderate, IT90 high, IT98 very high.
+SEVERITY_Z = {"IT50": 0.0, "IT90": 1.2816, "IT98": 2.0537}
 
 
 @dataclass
@@ -262,13 +265,83 @@ class CityData:
         firsts = d.groupby("origin_date")[["target_date", "base", "output", "actual"]].first()
         return out.join(firsts).sort_index()
 
-    def typical_peak(self) -> float:
-        """Median of past complete seasons' citywide peaks, skipping 2020-21, the
-        season flu did not circulate."""
+    def past_seasons(self) -> dict[str, pd.Series]:
+        """Complete past seasons (40+ weeks), citywide, skipping 2020-21, the season
+        flu did not circulate. What every season-level comparison is made with."""
         current = self.season_label(self.origin)
-        peaks = [s.max() for label, s in self.seasons().items()
-                 if label not in (current, "2020-21") and len(s) >= 40]
+        return {label: s for label, s in self.seasons().items()
+                if label not in (current, "2020-21") and len(s) >= 40}
+
+    def typical_peak(self) -> float:
+        """Median of past complete seasons' citywide peaks."""
+        peaks = [s.max() for s in self.past_seasons().values()]
         return float(np.median(peaks)) if peaks else float("nan")
+
+    # --- how severe the season is ----------------------------------------------------
+    def severity_thresholds(self) -> dict:
+        """Intensity thresholds by the moving epidemic method, as CDC uses it to
+        classify seasons (Biggerstaff et al., Am J Epidemiol 2018): pool the logs of
+        each past season's 3 highest weeks; IT_p = exp(mean + z_p * SD)."""
+        top = {k: s.nlargest(3) for k, s in self.past_seasons().items()}
+        logs = np.log(np.concatenate([t.to_numpy() for t in top.values()]))
+        mu, sigma = float(logs.mean()), float(logs.std(ddof=1))
+        return {"top": top, "mu": mu, "sigma": sigma, "n": len(logs),
+                "its": {k: float(np.exp(mu + z * sigma)) for k, z in SEVERITY_Z.items()}}
+
+    def severity_class(self, value: float) -> str | None:
+        if value is None or not np.isfinite(value):
+            return None
+        its = self.severity_thresholds()["its"]
+        return LEVELS[sum(value >= its[k] for k in SEVERITY_Z)]
+
+    def season_severity(self) -> pd.DataFrame:
+        """Every season's citywide peak, when it came, and its class. `role` is
+        "used" (in the thresholds), "current", or "skipped"."""
+        cw = self.citywide().dropna()
+        used, current = self.past_seasons(), self.season_label(self.origin)
+        rows = []
+        for label, s in self.seasons().items():
+            year = int(label[:4])
+            span = cw[(cw.index >= f"{year}-08-01") & (cw.index < f"{year + 1}-08-01")]
+            rows.append({"season": label, "peak": float(s.max()), "peak_week": int(s.idxmax()),
+                         "peak_date": span.idxmax(), "weeks": len(s),
+                         "cls": self.severity_class(s.max()),
+                         "role": "current" if label == current else "used" if label in used
+                         else "skipped"})
+        return pd.DataFrame(rows).sort_values("season").reset_index(drop=True)
+
+    def exceed_prob(self, threshold: float, model: str = PRIMARY) -> pd.Series:
+        """Chance the citywide average is above `threshold`, per horizon. The area
+        quantiles are averaged (Vincentized), as citywide_forecast does, and the CDF
+        interpolated between them; outside the 1%-99% quantiles it stays at 1% / 99%."""
+        f = self.forecast[self.forecast["model"] == model]
+        cols = [c for c in QUANTILES if c in f]
+        levels = np.array([float(c[1:]) for c in cols])
+        q = f.groupby("horizon")[cols].mean()
+        return pd.Series({h: 1 - float(np.interp(threshold, np.maximum.accumulate(row.to_numpy()),
+                                                 levels))
+                          for h, row in q.iterrows()}).sort_index()
+
+    def analogs(self, n: int = 3) -> list[dict]:
+        """Past seasons closest to this one so far (plus the graph model's medians),
+        by RMSE of log(1 + value) over the same weeks since 1 August."""
+        current = self.season_label(self.origin)
+        path = self.seasons().get(current, pd.Series(dtype=float)).copy()
+        start = pd.Timestamp(year=int(current[:4]), month=8, day=1)
+        for r in self.citywide_forecast(PRIMARY).itertuples():
+            path[(pd.Timestamp(r.target_date) - start).days // 7] = r.predicted
+        out = []
+        for label, s in self.past_seasons().items():
+            common = path.index.intersection(s.index)
+            if len(common) < 4:
+                continue
+            gap = np.log1p(path[common]) - np.log1p(s[common])
+            out.append({"season": label, "rmse": float(np.sqrt((gap ** 2).mean())),
+                        "weeks": len(common), "series": s,
+                        "peak": float(s.max()), "peak_week": int(s.idxmax()),
+                        "cls": self.severity_class(s.max()),
+                        "ahead": float(s.get(path.index.max(), np.nan))})
+        return sorted(out, key=lambda a: a["rmse"])[:n]
 
 
 def _thresholds(history: pd.DataFrame) -> pd.DataFrame:

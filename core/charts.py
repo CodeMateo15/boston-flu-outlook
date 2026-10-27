@@ -14,7 +14,7 @@ from html import escape
 import numpy as np
 import pandas as pd
 
-from .data import MODEL_CLASS, MODEL_SHORT
+from .data import LEVEL_STATUS, LEVELS, MODEL_CLASS, MODEL_SHORT
 
 
 def esc(text) -> str:
@@ -149,9 +149,12 @@ def fan_chart(history: pd.Series, forecasts: dict[str, pd.DataFrame], *, unit: s
 # --- season ribbons ------------------------------------------------------------------
 
 def ribbons(seasons: dict[str, pd.Series], current: str, forecast: list[tuple[int, float]], *,
-            unit: str, fmt, width: int = 760, height: int = 280) -> str:
+            unit: str, fmt, width: int = 760, height: int = 280,
+            highlight: dict[str, str] | None = None) -> str:
     """This season against every past one, by week since 1 August. Past seasons are
-    recessive grey; the current one carries the colour (emphasis, not identity)."""
+    recessive grey; the current one carries the colour (emphasis, not identity).
+    `highlight` maps past seasons to a series class, drawn in colour and labelled."""
+    highlight = highlight or {}
     top = max(s.max() for s in seasons.values())
     if forecast:
         top = max(top, max(v for _, v in forecast))
@@ -168,13 +171,17 @@ def ribbons(seasons: dict[str, pd.Series], current: str, forecast: list[tuple[in
     for i, m in enumerate(["Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul"]):
         out.append(f'<text class="tick" x="{X(i * 52 / 12 + 2):.1f}" y="{height - 8}" text-anchor="middle">{m}</text>')
     out.append(f'<text class="tick" x="{l}" y="{t - 3}">{esc(unit)}</text>')
-    for label, s in sorted(seasons.items()):
+    for label, s in sorted(seasons.items(), key=lambda kv: (kv[0] in highlight, kv[0])):
         if label == current:
             continue
         pts = [(X(wk), Y(v)) for wk, v in s.items()]
         peak = s.idxmax()
-        out.append(f'<path class="past" d="{_path(pts)}" data-tip="{esc(label)}&#10;Peak {esc(fmt(s.max()))}, '
+        cls = f"line {highlight[label]}" if label in highlight else "past"
+        out.append(f'<path class="{cls}" d="{_path(pts)}" data-tip="{esc(label)}&#10;Peak {esc(fmt(s.max()))}, '
                    f'week {int(peak)} of the season"/>')
+        if label in highlight:
+            out.append(f'<text class="direct" x="{X(peak) + 6:.1f}" y="{Y(s.max()) - 6:.1f}">'
+                       f'{esc(label)}</text>')
     if current in seasons:
         s = seasons[current]
         pts = [(X(wk), Y(v)) for wk, v in s.items()]
@@ -584,5 +591,117 @@ def driver_timeline(hist: pd.DataFrame, drivers: list[str], heads: dict[str, str
                    f'<rect class="hit" x="{x - step / 2:.1f}" y="{fr.t}" width="{step:.1f}" '
                    f'height="{bottom - fr.t:.1f}"/><line class="guide" x1="{x:.1f}" x2="{x:.1f}" '
                    f'y1="{fr.t}" y2="{bottom:.1f}"/></g>')
+    out.append("</svg>")
+    return "".join(out)
+
+
+# --- how severe the season is -----------------------------------------------------------
+# Class colours are the status tokens the level pills use, so "High" looks the same
+# on a pill, a bar and a cell; the class name is always printed beside it.
+
+SEV_LINES = (("IT50", "Moderate"), ("IT90", "High"), ("IT98", "Very high"))
+
+
+def chance(p: float) -> str:
+    """A probability read off the 1%-99% quantiles: never claims more than that."""
+    if not np.isfinite(p):
+        return "—"
+    return "<1%" if p <= 0.0101 else ">99%" if p >= 0.9899 else f"{p:.0%}"
+
+
+def severity_strip(table: pd.DataFrame, its: dict[str, float], *, fmt, unit: str,
+                   notes: dict[str, str] | None = None,
+                   outlook: tuple[float, float, float, str] | None = None,
+                   width: int = 760) -> str:
+    """Every season's peak week against the severity lines, the four classes as
+    faint zones behind. The current season adds, hollow, the forecast's highest
+    median in the weeks ahead, with its 95% range: (median, low, high, when)."""
+    notes = notes or {}
+    L, R, T, row_h, bar_h = 104, 96, 26, 26, 14
+    n = len(table)
+    bottom = T + n * row_h
+    height = bottom + 24
+    vals = list(table["peak"]) + list(its.values()) + (list(outlook[:3]) if outlook else [])
+    hi = nice_ticks(max(vals) * 1.05)[-1]
+    X = lambda v: L + min(max(v, 0), hi) / hi * (width - L - R)
+    out = [f'<svg class="chart severity" viewBox="0 0 {width} {height}" role="img" '
+           f'aria-label="Every season\'s peak against the severity lines">']
+    edges = [0.0] + [its[k] for k, _ in SEV_LINES] + [hi]
+    for i, lvl in enumerate(LEVELS):
+        a, b = X(edges[i]), X(edges[i + 1])
+        out.append(f'<rect class="sev-zone sev-{LEVEL_STATUS[lvl]}" x="{a:.1f}" y="{T}" '
+                   f'width="{b - a:.1f}" height="{n * row_h}"/>'
+                   f'<text class="tick sev-name" x="{(a + b) / 2:.1f}" y="{T - 8}" '
+                   f'text-anchor="middle">{esc(lvl)}</text>')
+    out.append(f'<line class="axis" x1="{L}" x2="{width - R}" y1="{bottom}" y2="{bottom}"/>'
+               f'<text class="tick" x="{L}" y="{bottom + 14}" text-anchor="middle">0</text>')
+    for key, _ in SEV_LINES:
+        x = X(its[key])
+        out.append(f'<line class="sev-line" x1="{x:.1f}" x2="{x:.1f}" y1="{T - 2}" y2="{bottom}"/>'
+                   f'<text class="tick strong" x="{x:.1f}" y="{bottom + 14}" '
+                   f'text-anchor="middle">{esc(fmt(its[key]))}</text>')
+    out.append(f'<text class="tick" x="{width - R}" y="{bottom + 14}" text-anchor="start" '
+               f'dx="8">{esc(unit)}</text>')
+    for i, r in enumerate(table.itertuples()):
+        y = T + i * row_h
+        mid = y + row_h / 2
+        now = r.role == "current"
+        cls = "sev-skip" if r.role == "skipped" else f"sev-{LEVEL_STATUS[r.cls]}"
+        lines = [r.season + (", so far" if now else ""),
+                 f"Peak {fmt(r.peak)} {unit}, week of {_date(r.peak_date)}",
+                 f"{r.cls}" + (" so far" if now else "")]
+        if r.season in notes:
+            lines.append(notes[r.season])
+        if now and outlook:
+            med, lo, up, when = outlook
+            lines.append(f"Forecast high {when}: {fmt(med)} (95% range {fmt(lo)}–{fmt(up)})")
+        end = X(r.peak)
+        parts = [f'<g class="sev-row{" now" if now else ""}" data-tip="{esc(chr(10).join(lines))}">',
+                 f'<rect class="hit" x="0" y="{y}" width="{width}" height="{row_h}"/>',
+                 f'<text class="row-label{" strong" if now else ""}" x="{L - 10}" y="{mid + 4:.1f}" '
+                 f'text-anchor="end">{esc(r.season)}</text>',
+                 f'<rect class="sev-bar {cls}" x="{L}" y="{mid - bar_h / 2:.1f}" '
+                 f'width="{max(end - L, 2):.1f}" height="{bar_h}" rx="3"/>']
+        text = fmt(r.peak)
+        if now and outlook:
+            if X(med) > end:
+                parts.append(f'<rect class="sev-ahead" x="{end:.1f}" y="{mid - bar_h / 2 + 1:.1f}" '
+                             f'width="{X(med) - end:.1f}" height="{bar_h - 2}" rx="3"/>')
+            a, b = X(lo), X(up)
+            parts.append(f'<g class="sev-whisker"><line x1="{a:.1f}" x2="{b:.1f}" y1="{mid:.1f}" '
+                         f'y2="{mid:.1f}"/><line x1="{b:.1f}" x2="{b:.1f}" y1="{mid - 5:.1f}" '
+                         f'y2="{mid + 5:.1f}"/></g>')
+            end = max(end, X(med), b)
+            text = f"{fmt(r.peak)} → {fmt(med)}"
+        parts.append(f'<text class="sev-val" x="{end + 6:.1f}" y="{mid + 4:.1f}">{esc(text)}</text></g>')
+        out.append("".join(parts))
+    out.append("</svg>")
+    return "".join(out)
+
+
+def odds_grid(probs: pd.DataFrame, weeks: list[str], *, width: int = 560) -> str:
+    """Chance of each forecast week being above each severity line: rows are the
+    lines, columns the weeks ahead; the cell fills with the chance."""
+    L, T, row_h = 150, 26, 34
+    cols = len(probs)
+    cw = (width - L - 8) / max(cols, 1)
+    height = T + row_h * len(SEV_LINES) + 6
+    out = [f'<svg class="chart odds" viewBox="0 0 {width} {height}" role="img" '
+           f'aria-label="Chance of crossing each severity line">']
+    for j, w in enumerate(weeks):
+        out.append(f'<text class="tick" x="{L + (j + 0.5) * cw:.1f}" y="{T - 9}" '
+                   f'text-anchor="middle">{esc(w)}</text>')
+    for i, (key, name) in enumerate(SEV_LINES):
+        y = T + i * row_h
+        out.append(f'<text class="row-label" x="{L - 10}" y="{y + row_h / 2 + 4:.1f}" '
+                   f'text-anchor="end">Above {esc(name.lower())}</text>')
+        for j, (h, p) in enumerate(probs[key].items()):
+            x = L + j * cw
+            tip = f"{name} line, week of {weeks[j]}&#10;{chance(p)} chance the citywide average is above it"
+            out.append(f'<g data-tip="{tip}"><rect class="odds-cell sev-{LEVEL_STATUS[name]}" '
+                       f'x="{x + 2:.1f}" y="{y + 2}" width="{cw - 4:.1f}" height="{row_h - 4}" rx="4" '
+                       f'fill-opacity="{0.06 + 0.6 * p:.2f}"/><text class="odds-val" '
+                       f'x="{x + cw / 2:.1f}" y="{y + row_h / 2 + 4:.1f}" text-anchor="middle">'
+                       f'{esc(chance(p))}</text></g>')
     out.append("</svg>")
     return "".join(out)
