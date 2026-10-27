@@ -623,7 +623,7 @@ def server(input, output, session):
                      "the neighbors matter more by week four.", class_="note"),
                 ui.output_ui("drv_body"),
                 value="drivers") if B.has_drivers else None,
-            "severity": ui.nav_panel(V.TAB_TITLES["severity"], severity_panel(B, m),
+            "severity": ui.nav_panel(V.TAB_TITLES["severity"], severity_panel(B, m, area),
                                      value="severity"),
             "all": ui.nav_panel(
                 V.TAB_TITLES["all"],
@@ -664,22 +664,39 @@ def server(input, output, session):
             sel_area.set(area)
             ui.update_select("area", selected=area)
             ui.update_select("drv_area", selected=area)
+            ui.update_select("sev_area", selected=area)
             ui.update_navs("nav", selected="detail")
 
-    # The Neighborhood and What's-driving-it tabs share one selected area.
+    # The Neighborhood, What's-driving-it and Severity tabs share one selected area.
+    def _share_area(area: str, source: str):
+        sel_area.set(area)
+        for other in ("area", "drv_area", "sev_area"):
+            if other != source and other in input and input[other]() != area:
+                ui.update_select(other, selected=area)
+
     @reactive.effect
     @reactive.event(input.area)
     def _keep_area():
-        sel_area.set(input.area())
-        if "drv_area" in input and input.drv_area() != input.area():
-            ui.update_select("drv_area", selected=input.area())
+        _share_area(input.area(), "area")
 
     @reactive.effect
     @reactive.event(input.drv_area)
     def _keep_drv_area():
-        sel_area.set(input.drv_area())
-        if "area" in input and input.area() != input.drv_area():
-            ui.update_select("area", selected=input.drv_area())
+        _share_area(input.drv_area(), "drv_area")
+
+    @reactive.effect
+    @reactive.event(input.sev_area)
+    def _keep_sev_area():
+        _share_area(input.sev_area(), "sev_area")
+
+    # Clicks on the severity table and grid pick that area, on the same tab.
+    @reactive.effect
+    @reactive.event(input.sev_click)
+    def _sev_click():
+        area = input.sev_click()
+        if area in B.areas:
+            ui.update_select("sev_area", selected=area)
+            _share_area(area, "sev_area")
 
     # Clicks on the spillover map and the matrix explain that area, on the same tab.
     @reactive.effect
@@ -690,6 +707,7 @@ def server(input, output, session):
             sel_area.set(area)
             ui.update_select("drv_area", selected=area)
             ui.update_select("area", selected=area)
+            ui.update_select("sev_area", selected=area)
 
     @reactive.effect
     @reactive.event(input.to_drivers)
@@ -817,6 +835,19 @@ def server(input, output, session):
                                   "data-tip": f"{short(B, area)}\nNow {B.fmt(latest[area])}, "
                                               f"in {hmax} weeks {B.fmt(ahead[area])}"}))
         return ui.div(*cards, class_="multiples")
+
+    # --- severity, by neighborhood -------------------------------------------------------
+    def sev_pick() -> str:
+        area = input.sev_area() if "sev_area" in input else sel_area()
+        return area if area in B.areas else B.areas[0]
+
+    @render.ui
+    def sev_overview():
+        return severity_overview(B, sev_pick())
+
+    @render.ui
+    def sev_detail():
+        return severity_area_block(B, sev_pick())
 
     # --- track record ----------------------------------------------------------------
     @render.ui
@@ -1141,7 +1172,106 @@ def analogs_block(city: D.CityData, analogs: list[dict], current: str, table: pd
         class_="chart-card")
 
 
-def severity_panel(city: D.CityData, m: str):
+def skipped_notes(table: pd.DataFrame) -> dict[str, str]:
+    """Why each grey season in a severity strip is left out of the lines."""
+    return {r.season: ("Left out of the lines: flu did not circulate" if r.season == "2020-21"
+                       else f"Left out of the lines: only {r.weeks} weeks of data")
+            for r in table.itertuples() if r.role == "skipped"}
+
+
+def severity_overview(city: D.CityData, selected: str):
+    """Every area this season against its own lines, then every area and season."""
+    hmax = max(city.horizons)
+    target = week_span(city.rows(D.PRIMARY)["target_date"].max())
+    rows = []
+    for a in city.areas:
+        its = city.severity_thresholds(a)["its"]
+        t = city.season_severity(a)
+        now = t[t["role"] == "current"].iloc[0]
+        p = city.exceed_prob(its["IT50"], area=a).get(hmax, np.nan)
+        rows.append((now.peak / its["IT50"], a, now, its, p))
+    trs = []
+    for share, a, now, its, p in sorted(rows, key=lambda r: -r[0]):
+        status = D.LEVEL_STATUS[now.cls]
+        trs.append(ui.tags.tr(
+            ui.tags.td(short(city, a)), ui.tags.td(city.fmt(now.peak)),
+            ui.tags.td(ui.div(ui.div(ui.div(class_="share-bar",
+                                            style=f"width:{min(share, 1) * 100:.0f}%"),
+                                     class_=f"share-track sev-{status}"),
+                              ui.span(f"{share:.0%}"), class_="share")),
+            ui.tags.td(level_pill(now.cls)),
+            ui.tags.td(" · ".join(city.fmt(its[k]) for k, _ in C.SEV_LINES)),
+            ui.tags.td(C.chance(p)),
+            class_="selected" if a == selected else None,
+            **{"data-area": a, "data-input": "sev_click", "tabindex": "0"}))
+    tables = {a: city.season_severity(a) for a in sorted(city.areas, key=lambda a: short(city, a))}
+    # Which past season rated high or worse in the most areas, against their own lines.
+    worst = (pd.concat([t.assign(area=a) for a, t in tables.items()])
+             .query("role == 'used'").assign(bad=lambda d: d["cls"].isin(["High", "Very high"]))
+             .groupby("season")["bad"].sum().sort_values(ascending=False))
+    grid = C.severity_grid(tables, names={a: short(city, a) for a in city.areas}, fmt=city.fmt,
+                           unit=city.info["unit_short"], input_id="sev_click", selected=selected)
+    words = city.info["areas_word"]
+    return ui.div(
+        ui.div(ui.tags.table(
+            ui.tags.thead(ui.tags.tr(*[ui.tags.th(t) for t in (
+                city.info["area_word"].capitalize(), "Highest week so far",
+                "Share of its moderate line", "So far", "Its lines (moderate · high · very high)",
+                f"Chance above its moderate line, week of {target}")])),
+            ui.tags.tbody(*trs), class_="score-table sev-table"), class_="table-scroll"),
+        ui.p("Sorted by how close each is to its own moderate line. The chances come straight "
+             f"from each {city.info['area_word']}'s forecast ranges, so they need no averaging.",
+             class_="note"),
+        ui.h4("Every season, every " + city.info["area_word"]),
+        ui.p(f"Each cell is one season against that {city.info['area_word']}'s own lines "
+             "(L low, M moderate, H high, VH very high); the last column is this season so far. "
+             f"Hover a cell for its peak. In {worst.index[0]}, {int(worst.iloc[0])} of "
+             f"{len(tables)} {words} had a high or very high season by their own lines.",
+             class_="blurb"),
+        ui.HTML(grid))
+
+
+def severity_area_block(city: D.CityData, area: str):
+    """One area against its own lines: the sentence and the season strip."""
+    th = city.severity_thresholds(area)
+    its = th["its"]
+    table = city.season_severity(area)
+    now = table[table["role"] == "current"].iloc[0]
+    unit = city.info["unit_short"]
+    rows = city.rows(D.PRIMARY, area)
+    last = rows.iloc[-1]
+    name = short(city, area)
+    nxt = next(((k, n) for k, n in C.SEV_LINES if now.peak < its[k]), None)
+    head = (f"<strong>{name}</strong>: its highest week so far ({city.fmt(now.peak)} {unit}, week "
+            f"of {week_span(now.peak_date)}) makes {now.season} a <strong>{now.cls.lower()}</strong> "
+            "season there so far, against its own history")
+    if nxt:
+        key, line = nxt
+        p = city.exceed_prob(its[key], area=area).get(last["horizon"], np.nan)
+        head += (f": {now.peak / its[key]:.0%} of its {line.lower()} line ({city.fmt(its[key])}). "
+                 f"The graph model gives a <strong>{C.chance(p)} chance</strong> that the week of "
+                 f"{week_span(last['target_date'])} is above it.")
+    else:
+        head += ", above even its very-high line."
+    ratio = its["IT50"] / city.severity_thresholds()["its"]["IT50"]
+    top = rows.loc[rows["predicted"].idxmax()]
+    strip = C.severity_strip(table, its, fmt=city.fmt, unit=unit, notes=skipped_notes(table),
+                             outlook=(top["predicted"], top["lower"], top["upper"],
+                                      f"week of {week_span(top['target_date'])}"))
+    return ui.div(
+        ui.p(ui.HTML(head), class_="callout"),
+        ui.div(
+            ui.h3(f"{name}: every season against its own lines"),
+            ui.p(f"{name}'s lines come from its 3 highest weeks in each of {len(th['top'])} "
+                 f"seasons: geometric mean {city.fmt(np.exp(th['mu']))}, σ = {th['sigma']:.3f}. "
+                 f"They sit at {ratio:.1f}× the citywide ones (moderate from "
+                 f"{city.fmt(its['IT50'])}, high from {city.fmt(its['IT90'])}, very high from "
+                 f"{city.fmt(its['IT98'])}). Same chart as the citywide one above.",
+                 class_="blurb"),
+            ui.HTML(strip), class_="chart-card"))
+
+
+def severity_panel(city: D.CityData, m: str, area: str | None = None):
     th = city.severity_thresholds()
     its = th["its"]
     table = city.season_severity()
@@ -1160,8 +1290,8 @@ def severity_panel(city: D.CityData, m: str):
 
     # The next line above this season's highest week so far, and the chance of crossing it.
     nxt = next(((k, name) for k, name in C.SEV_LINES if now.peak < its[k]), None)
-    head = (f"So far, {now.season} is a <strong>{now.cls.lower()}-severity</strong> season in "
-            f"{city.label}: its highest week yet ({city.fmt(now.peak)} {unit}, week of "
+    head = (f"Citywide, {now.season} is so far a <strong>{now.cls.lower()}-severity</strong> "
+            f"season in {city.label}: its highest week yet ({city.fmt(now.peak)} {unit}, week of "
             f"{week_span(now.peak_date)})")
     if nxt:
         key, name = nxt
@@ -1174,10 +1304,7 @@ def severity_panel(city: D.CityData, m: str):
         head += " is already above the very-high line."
 
     top = fc.loc[fc["predicted"].idxmax()]
-    notes = {r.season: ("Left out of the lines: flu did not circulate" if r.season == "2020-21"
-                        else f"Left out of the lines: only {r.weeks} weeks of data")
-             for r in table.itertuples() if r.role == "skipped"}
-    strip = C.severity_strip(table, its, fmt=city.fmt, unit=unit, notes=notes,
+    strip = C.severity_strip(table, its, fmt=city.fmt, unit=unit, notes=skipped_notes(table),
                              outlook=(top["predicted"], top["lower"], top["upper"],
                                       f"week of {week_span(top['target_date'])}"))
     weeks = [week_span(d) for d in fc["target_date"]]
@@ -1188,7 +1315,10 @@ def severity_panel(city: D.CityData, m: str):
         ui.h2("How bad is this season?"),
         ui.p("Severity rates a whole flu season, not a single week: how high its worst week "
              "climbs, against the spread of past seasons' worst weeks. The lines are the ones "
-             "CDC's method would draw from Boston's own history.", class_="blurb"),
+             "CDC's method would draw from Boston's own history. The top of the page rates the "
+             f"city as a whole (the average of its {len(city.areas)} {city.info['areas_word']}); "
+             f"further down, each {city.info['area_word']} is rated against its own history.",
+             class_="blurb"),
         ui.p(ui.HTML(head), class_="callout"),
         ui.div(
             tile("Season so far", ui.span(now.cls, class_=f"pill pill-{D.LEVEL_STATUS[now.cls]}"),
@@ -1203,7 +1333,7 @@ def severity_panel(city: D.CityData, m: str):
                  if closest else ""),
             class_="tiles"),
         ui.div(
-            ui.h3("Every season against the lines"),
+            ui.h3("Citywide: every season against the lines"),
             ui.p(f"Each bar runs to a season's highest week, citywide. The shaded zones are the "
                  f"four classes, split at the lines worked out below. Grey seasons are left out "
                  f"of the lines; hover for why. {now.season}'s bar is its peak so far; the hollow "
@@ -1230,6 +1360,20 @@ def severity_panel(city: D.CityData, m: str):
                  "wider than the true range of their average, so if anything these chances run "
                  "high.", class_="note"),
             class_="chart-card"),
+        ui.div(
+            ui.h3(f"{city.info['areas_word'].capitalize()}, each against its own lines"),
+            ui.p(f"The same four steps, run on each {city.info['area_word']}'s own weeks. Their "
+                 "usual levels differ several times over, so one set of citywide lines would "
+                 f"rate some {city.info['areas_word']} high every year and others never; like the "
+                 "levels on the other tabs, each is rated against itself. Click a row to see it "
+                 "below.", class_="blurb"),
+            ui.output_ui("sev_overview"), class_="chart-card"),
+        ui.div(
+            ui.div(ui.input_select("sev_area", city.info["area_word"].capitalize(),
+                                   {a: short(city, a) for a in city.areas},
+                                   selected=area if area in city.areas else city.areas[0]),
+                   class_="controls"),
+            ui.output_ui("sev_detail")),
         analogs_block(city, analogs, now.season, table) if analogs else None,
         ui.div(
             ui.h3("How to read this"),

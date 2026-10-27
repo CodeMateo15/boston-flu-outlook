@@ -672,7 +672,7 @@ def severity_strip(table: pd.DataFrame, its: dict[str, float], *, fmt, unit: str
                          f'y2="{mid:.1f}"/><line x1="{b:.1f}" x2="{b:.1f}" y1="{mid - 5:.1f}" '
                          f'y2="{mid + 5:.1f}"/></g>')
             end = max(end, X(med), b)
-            text = f"{fmt(r.peak)} → {fmt(med)}"
+            text = f"{fmt(r.peak)} → {fmt(med)}" if med > r.peak else fmt(r.peak)
         parts.append(f'<text class="sev-val" x="{end + 6:.1f}" y="{mid + 4:.1f}">{esc(text)}</text></g>')
         out.append("".join(parts))
     out.append("</svg>")
@@ -703,5 +703,47 @@ def odds_grid(probs: pd.DataFrame, weeks: list[str], *, width: int = 560) -> str
                        f'fill-opacity="{0.06 + 0.6 * p:.2f}"/><text class="odds-val" '
                        f'x="{x + cw / 2:.1f}" y="{y + row_h / 2 + 4:.1f}" text-anchor="middle">'
                        f'{esc(chance(p))}</text></g>')
+    out.append("</svg>")
+    return "".join(out)
+
+
+def severity_grid(tables: dict[str, pd.DataFrame], *, names: dict[str, str], fmt, unit: str,
+                  input_id: str, selected: str | None = None, width: int = 760) -> str:
+    """Neighborhoods x seasons: each cell is that season's class against the
+    neighborhood's own lines. `tables` is season_severity() per area; seasons left
+    out of the lines are left out here too, and the current one reads "so far"."""
+    first = next(iter(tables.values()))
+    seasons = list(first.loc[first["role"] != "skipped", "season"])
+    L, T, row_h = 150, 24, 24
+    cw = (width - L - 8) / len(seasons)
+    height = T + row_h * len(tables) + 6
+    short = {lvl: abbr for lvl, abbr in zip(LEVELS, ("L", "M", "H", "VH"))}
+    out = [f'<svg class="chart matrix sevgrid" viewBox="0 0 {width} {height}" role="img" '
+           f'aria-label="Each neighborhood\'s seasons against its own severity lines">']
+    for j, s in enumerate(seasons):
+        now = j == len(seasons) - 1 and first.iloc[-1]["role"] == "current"
+        out.append(f'<text class="col-head{" strong" if now else ""}" x="{L + (j + 0.5) * cw:.1f}" '
+                   f'y="{T - 8}" text-anchor="middle">{esc(s + (" so far" if now else ""))}</text>')
+    for i, (area, table) in enumerate(tables.items()):
+        y = T + i * row_h
+        rows = table.set_index("season")
+        sel = " selected" if area == selected else ""
+        out.append(f'<g class="mx-row{sel}" data-area="{esc(area)}" data-input="{esc(input_id)}" '
+                   f'tabindex="0"><rect class="mx-hit" x="0" y="{y}" width="{width}" '
+                   f'height="{row_h}" rx="4"/><text class="row-label" x="{L - 10}" '
+                   f'y="{y + row_h / 2 + 4:.1f}" text-anchor="end">{esc(names[area])}</text>')
+        for j, s in enumerate(seasons):
+            if s not in rows.index or rows.at[s, "cls"] is None:
+                continue
+            r = rows.loc[s]
+            now = r["role"] == "current"
+            tip = (f"{names[area]}, {s}{', so far' if now else ''}&#10;{r['cls']} against its own "
+                   f"lines&#10;Peak {fmt(r['peak'])} {unit}, week of {_date(r['peak_date'])}")
+            out.append(f'<g data-tip="{esc(tip)}"><rect class="odds-cell sev-{LEVEL_STATUS[r["cls"]]}'
+                       f'{" now" if now else ""}" x="{L + j * cw + 2:.1f}" y="{y + 2}" '
+                       f'width="{cw - 4:.1f}" height="{row_h - 4}" rx="3"/><text class="odds-val" '
+                       f'x="{L + (j + 0.5) * cw:.1f}" y="{y + row_h / 2 + 4:.1f}" '
+                       f'text-anchor="middle">{short[r["cls"]]}</text></g>')
+        out.append("</g>")
     out.append("</svg>")
     return "".join(out)

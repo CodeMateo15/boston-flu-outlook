@@ -87,6 +87,7 @@ class CityData:
     thresholds: pd.DataFrame = field(default_factory=pd.DataFrame)
     runtimes: pd.DataFrame | None = None  # seconds per model, horizon and weekly origin
     drivers: pd.DataFrame | None = None   # graph-model attributions, one row per driver
+    _severity: dict = field(default_factory=dict, repr=False)  # thresholds, by area (None = city)
 
     # --- basics ------------------------------------------------------------
     @property
@@ -265,12 +266,16 @@ class CityData:
         firsts = d.groupby("origin_date")[["target_date", "base", "output", "actual"]].first()
         return out.join(firsts).sort_index()
 
-    def past_seasons(self) -> dict[str, pd.Series]:
-        """Complete past seasons (40+ weeks), citywide, skipping 2020-21, the season
-        flu did not circulate. What every season-level comparison is made with."""
+    def past_seasons(self, area: str | None = None) -> dict[str, pd.Series]:
+        """Complete past seasons, skipping 2020-21, the season flu did not circulate.
+        What every season-level comparison is made with. A season is complete when
+        the city has 40+ weeks of it: a neighborhood's missing weeks are BPHC
+        suppressing small counts, so they are never its peak."""
         current = self.season_label(self.origin)
-        return {label: s for label, s in self.seasons().items()
+        full = {label for label, s in self.seasons().items()
                 if label not in (current, "2020-21") and len(s) >= 40}
+        series = self.seasons(None if area is None else self.history[area])
+        return {label: s for label, s in series.items() if label in full}
 
     def typical_peak(self) -> float:
         """Median of past complete seasons' citywide peaks."""
@@ -278,43 +283,51 @@ class CityData:
         return float(np.median(peaks)) if peaks else float("nan")
 
     # --- how severe the season is ----------------------------------------------------
-    def severity_thresholds(self) -> dict:
+    # Citywide when `area` is None, otherwise against that area's own history.
+    def severity_thresholds(self, area: str | None = None) -> dict:
         """Intensity thresholds by the moving epidemic method, as CDC uses it to
         classify seasons (Biggerstaff et al., Am J Epidemiol 2018): pool the logs of
         each past season's 3 highest weeks; IT_p = exp(mean + z_p * SD)."""
-        top = {k: s.nlargest(3) for k, s in self.past_seasons().items()}
-        logs = np.log(np.concatenate([t.to_numpy() for t in top.values()]))
-        mu, sigma = float(logs.mean()), float(logs.std(ddof=1))
-        return {"top": top, "mu": mu, "sigma": sigma, "n": len(logs),
+        if area not in self._severity:
+            top = {k: s.nlargest(3) for k, s in self.past_seasons(area).items()}
+            logs = np.log(np.concatenate([t.to_numpy() for t in top.values()]))
+            mu, sigma = float(logs.mean()), float(logs.std(ddof=1))
+            self._severity[area] = {
+                "top": top, "mu": mu, "sigma": sigma, "n": len(logs),
                 "its": {k: float(np.exp(mu + z * sigma)) for k, z in SEVERITY_Z.items()}}
+        return self._severity[area]
 
-    def severity_class(self, value: float) -> str | None:
+    def severity_class(self, value: float, area: str | None = None) -> str | None:
         if value is None or not np.isfinite(value):
             return None
-        its = self.severity_thresholds()["its"]
+        its = self.severity_thresholds(area)["its"]
         return LEVELS[sum(value >= its[k] for k in SEVERITY_Z)]
 
-    def season_severity(self) -> pd.DataFrame:
-        """Every season's citywide peak, when it came, and its class. `role` is
-        "used" (in the thresholds), "current", or "skipped"."""
-        cw = self.citywide().dropna()
-        used, current = self.past_seasons(), self.season_label(self.origin)
+    def season_severity(self, area: str | None = None) -> pd.DataFrame:
+        """Every season's peak, when it came, and its class. `role` is "used" (in
+        the thresholds), "current", or "skipped"."""
+        series = (self.citywide() if area is None else self.history[area]).dropna()
+        used, current = self.past_seasons(area), self.season_label(self.origin)
         rows = []
-        for label, s in self.seasons().items():
+        for label, s in self.seasons(series).items():
             year = int(label[:4])
-            span = cw[(cw.index >= f"{year}-08-01") & (cw.index < f"{year + 1}-08-01")]
+            span = series[(series.index >= f"{year}-08-01") & (series.index < f"{year + 1}-08-01")]
             rows.append({"season": label, "peak": float(s.max()), "peak_week": int(s.idxmax()),
                          "peak_date": span.idxmax(), "weeks": len(s),
-                         "cls": self.severity_class(s.max()),
+                         "cls": self.severity_class(s.max(), area),
                          "role": "current" if label == current else "used" if label in used
                          else "skipped"})
         return pd.DataFrame(rows).sort_values("season").reset_index(drop=True)
 
-    def exceed_prob(self, threshold: float, model: str = PRIMARY) -> pd.Series:
-        """Chance the citywide average is above `threshold`, per horizon. The area
-        quantiles are averaged (Vincentized), as citywide_forecast does, and the CDF
-        interpolated between them; outside the 1%-99% quantiles it stays at 1% / 99%."""
+    def exceed_prob(self, threshold: float, model: str = PRIMARY,
+                    area: str | None = None) -> pd.Series:
+        """Chance the value is above `threshold`, per horizon, with the CDF
+        interpolated between the quantiles; outside the 1%-99% quantiles it stays at
+        1% / 99%. Citywide, the area quantiles are averaged (Vincentized), as
+        citywide_forecast does."""
         f = self.forecast[self.forecast["model"] == model]
+        if area is not None:
+            f = f[f["area"] == area]
         cols = [c for c in QUANTILES if c in f]
         levels = np.array([float(c[1:]) for c in cols])
         q = f.groupby("horizon")[cols].mean()

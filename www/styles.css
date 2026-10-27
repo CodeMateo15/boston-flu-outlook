@@ -647,3 +647,18 @@ h4 { font-size: 15px; margin: 18px 0 6px; color: var(--text-secondary); }
 .analog-head .sw { width: 16px; height: 3px; border-radius: 2px; display: inline-block; }
 .analog-name { font-weight: 650; font-size: 15px; }
 .analog-sub { color: var(--text-muted); font-size: 12.5px !important; }
+
+/* Neighborhood x season severity grid, and the per-neighborhood table. */
+.chart.sevgrid { max-width: 900px; }
+.sevgrid .odds-cell { fill: var(--sev); fill-opacity: 0.75; stroke: var(--border); stroke-width: 1; }
+.sevgrid .odds-cell.now { fill-opacity: 0.35; stroke: var(--text-muted); stroke-dasharray: 3 2; }
+.sevgrid .odds-val { font-size: 11.5px; }
+.sevgrid .col-head.strong { fill: var(--text-primary); font-weight: 650; }
+@media (max-width: 600px) { .chart.sevgrid { min-width: 600px; } }
+.sev-table tr[data-area] { cursor: pointer; }
+.sev-table tr[data-area]:hover td { background: var(--surface-0); }
+.sev-table tr.selected td { background: var(--surface-0); font-weight: 650; }
+.share { display: flex; align-items: center; gap: 8px; min-width: 150px; }
+.share-track { flex: 1; height: 8px; border-radius: 4px; background: var(--surface-0);
+               border: 1px solid var(--border); overflow: hidden; }
+.share-bar { height: 100%; background: var(--sev); }
