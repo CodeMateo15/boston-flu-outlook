@@ -1062,50 +1062,53 @@ def severity_rules(city: D.CityData, its: dict[str, float]):
 
 
 def formula_block(city: D.CityData, th: dict, table: pd.DataFrame, analyst: bool):
-    its, mu, sigma, n = th["its"], th["mu"], th["sigma"], th["n"]
-    left_out = [f"{r.season} ({'flu did not circulate' if r.season == '2020-21' else f'only {r.weeks} weeks of data'})"
-                for r in table.itertuples() if r.role == "skipped"]
-    left_out.append(f"{city.season_label(city.origin)} (still running)")
+    its, mu, sigma, n, k, mult = (th[x] for x in ("its", "mu", "sigma", "n", "k", "mult"))
+    seasons = len(th["top"])
+    left_out = [r.season for r in table.itertuples() if r.role == "skipped"]
     peaks = table.loc[table["role"] == "used", "peak"]
-    chips = [ui.span(ui.tags.strong(k), " " + " · ".join(city.fmt(v) for v in t), class_="chip")
-             for k, t in th["top"].items()]
-    share = {"IT50": "1 in 2", "IT90": "1 in 10", "IT98": "1 in 50"}
+    chips = [ui.span(ui.tags.strong(s), " " + " · ".join(city.fmt(v) for v in t), class_="chip")
+             for s, t in th["top"].items()]
     lines = []
     for key, name in C.SEV_LINES:
-        z = D.SEVERITY_Z[key]
         lines.append(ui.tags.tr(
             ui.tags.td(ui.HTML(f"IT<sub>{key[2:]}</sub>")), ui.tags.td(f"{name} from"),
-            ui.tags.td(f"{z:.2f}"),
-            ui.tags.td(ui.HTML(f"e<sup>{mu:.3f} + {z:.2f} × {sigma:.3f}</sup> = "
+            ui.tags.td(f"{mult[key]:.3f}"),
+            ui.tags.td(ui.HTML(f"e<sup>{mu:.3f} + {mult[key]:.3f} × {sigma:.3f}</sup> = "
                                f"<strong>{city.fmt(its[key])}</strong>")),
-            ui.tags.td(f"{int((peaks >= its[key]).sum())} of {len(peaks)} "
-                       f"(about {share[key]} expected)")))
+            ui.tags.td(f"{int((peaks >= its[key]).sum())} of {len(peaks)}")))
     analyst_notes = None
     if analyst:
-        narrow = np.exp(mu + D.SEVERITY_Z["IT90"] * sigma / np.sqrt(n))
+        narrow = np.exp(mu + mult["IT90"] * sigma / np.sqrt(n))
         above = int((peaks >= narrow).sum())
         analyst_notes = ui.div(ui.h4("Method notes"), ui.tags.ul(
-            ui.tags.li(f"z = Φ⁻¹(p) for p = 0.50, 0.90, 0.98. σ is the sample SD (n − 1) of the "
-                       f"{n} pooled logs."),
-            ui.tags.li("The lines are ranges for a single season's top weeks, not for their mean. "
-                       f"With σ/√n instead, the high line would sit at {city.fmt(narrow)} and "
-                       f"{above} of the {len(peaks)} past seasons would rate high or worse."),
+            ui.tags.li(f"t is Student's t quantile with m − 1 = {n - 1} degrees of freedom, at "
+                       "p = 0.50, 0.90 and 0.98 (CDC's levels; mem's own default is 0.40, 0.90 "
+                       f"and 0.975). σ is the sample SD of the {n} pooled logs. This is mem's "
+                       "default intensity method (i.type.intensity = 6)."),
+            ui.tags.li("The lines are ranges for one more top week, not for the mean of the top "
+                       f"weeks. With σ/√m instead, the high line would sit at {city.fmt(narrow)} "
+                       f"and {above} of the {len(peaks)} reference seasons would peak high or "
+                       "worse."),
             ui.tags.li("CDC applies this to three indicators (outpatient ILI, hospitalizations, "
                        "deaths) and takes the class at least two agree on. BPHC publishes only "
                        "ED visits, so this is the one-indicator version."),
-            ui.tags.li("A season's top three weeks enter as they are, not smoothed, and the "
-                       "seasons are weighted equally (no recency weighting).")),
+            ui.tags.li("A season's top weeks enter as they are, not smoothed, and the seasons are "
+                       "weighted equally (no recency weighting). The same recipe fits the lines "
+                       "in the paper's severity analysis; there each test season used only the "
+                       "seasons before it.")),
             class_="note-card")
     return ui.div(
         ui.h3("The formula"),
-        ui.p("CDC rates flu seasons with intensity thresholds from the moving epidemic method "
-             "(Biggerstaff et al., 2018). Here it is step by step, with this city's numbers in.",
+        ui.p("CDC rates flu weeks and seasons with intensity thresholds from the moving epidemic "
+             "method (Vega et al., 2013; Biggerstaff et al., 2018), with the settings of the mem "
+             "R package, as in our paper. Here it is step by step, with this city's numbers in.",
              class_="blurb"),
         ui.tags.ol(
-            ui.tags.li(ui.tags.strong("Take each past season's three highest weeks"),
-                       f", citywide: {n} values from {len(th['top'])} seasons. Left out: "
-                       f"{', '.join(left_out[:-1])}{' and ' if len(left_out) > 1 else ''}"
-                       f"{left_out[-1]}.",
+            ui.tags.li(ui.tags.strong(f"Take each past season's {k} highest weeks"),
+                       f", citywide. The method pools about 30 values, so with {seasons} seasons "
+                       f"that is 30 ÷ {seasons} ≈ {k} each, {n} in all. Left out: "
+                       f"{', '.join(left_out)} (COVID-19 cut short or suppressed them) and "
+                       f"{city.season_label(city.origin)} (still running).",
                        ui.div(*chips, class_="fresh")),
             ui.tags.li(ui.tags.strong("Average them on a log scale."),
                        " Flu seasons differ by multiples, not by fixed amounts, so the logs "
@@ -1116,17 +1119,20 @@ def formula_block(city: D.CityData, th: dict, table: pd.DataFrame, analyst: bool
                        ui.div(ui.HTML(f"<var>σ</var> = SD of ln <var>x</var><sub>i</sub> = "
                                       f"{sigma:.3f}"), class_="formula")),
             ui.tags.li(ui.tags.strong("Set three lines above the geometric mean."),
-                       " Each is the upper end of a one-sided 50%, 90% or 98% range for a "
-                       "season's top weeks:",
+                       " Each is the upper end of a one-sided 50%, 90% or 98% range for one "
+                       "more top week:",
                        ui.div(ui.HTML("IT<sub><var>p</var></sub> = e<sup><var>μ</var> + "
-                                      "<var>z</var><sub><var>p</var></sub><var>σ</var></sup>"),
-                              class_="formula"),
+                                      "<var>t</var><sub><var>p</var></sub>(<var>m</var>−1)"
+                                      "·√(1 + 1/<var>m</var>)·<var>σ</var></sup>, "
+                                      f"&nbsp;<var>m</var> = {n}"), class_="formula"),
                        ui.div(ui.tags.table(
                            ui.tags.thead(ui.tags.tr(*[ui.tags.th(t) for t in (
-                               "Line", "Class", "z", "Worked out", "Seasons above it")])),
+                               "Line", "Level", "Multiplier", "Worked out",
+                               "Seasons that reached it")])),
                            ui.tags.tbody(*lines), class_="score-table"), class_="table-scroll")),
-            ui.tags.li(ui.tags.strong("Rate the season by its highest week."),
-                       severity_rules(city, its)),
+            ui.tags.li(ui.tags.strong("Rate each week against the lines."),
+                       " The season takes the level of its highest week. These are the levels "
+                       "on every tab.", severity_rules(city, its)),
             class_="steps"),
         analyst_notes, class_="chart-card")
 
@@ -1176,8 +1182,8 @@ def analogs_block(city: D.CityData, analogs: list[dict], current: str, table: pd
 
 def skipped_notes(table: pd.DataFrame) -> dict[str, str]:
     """Why each grey season in a severity strip is left out of the lines."""
-    return {r.season: ("Left out of the lines: flu did not circulate" if r.season == "2020-21"
-                       else f"Left out of the lines: only {r.weeks} weeks of data")
+    return {r.season: ("Left out of the lines: COVID-19 cut it short" if r.season == "2019-20"
+                       else "Left out of the lines: COVID-19 suppressed it")
             for r in table.itertuples() if r.role == "skipped"}
 
 
@@ -1210,9 +1216,6 @@ def severity_overview(city: D.CityData, selected: str, line: str = "IT50",
             ui.tags.td(C.chance(p)),
             class_="selected" if a == selected else None,
             **{"data-area": a, "data-input": "sev_click", "tabindex": "0"}))
-    # Areas whose latest week rates above their season so far: the two scales side by side.
-    split = [short(city, a) for _, a, now, _, _, week in rows
-             if week and D.LEVELS.index(week) > D.LEVELS.index(now.cls)]
     tables = {a: city.season_severity(a) for a in sorted(city.areas, key=lambda a: short(city, a))}
     # Which past season rated high or worse in the most areas, against their own lines.
     worst = (pd.concat([t.assign(area=a) for a, t in tables.items()])
@@ -1232,15 +1235,9 @@ def severity_overview(city: D.CityData, selected: str, line: str = "IT50",
         ui.p(f"Sorted by how close each is to its own {name} line. The chances come straight "
              f"from each {city.info['area_word']}'s forecast ranges, so they need no averaging.",
              class_="note"),
-        ui.p(ui.HTML(
-            "<strong>Season so far and this week's level are different scales.</strong> "
-            "This week's level is the pill on the other tabs: the latest week against that "
-            f"{city.info['area_word']}'s usual flu-season weeks, where any week above the middle "
-            "one is already moderate. Season severity puts the season's highest week against "
-            "past seasons' <em>highest</em> weeks, a much higher bar. So a "
-            f"{city.info['area_word']} can have a moderate week inside a season that is still "
-            "low-severity" + (f", as {' and '.join(split)} {'does' if len(split) == 1 else 'do'} "
-                              "now." if split else ".")), class_="note"),
+        ui.p(f"This week's level is the pill on the other tabs: the latest week against the "
+             "same lines. The season so far is its highest week against them, so it is never "
+             "below this week's level.", class_="note"),
         ui.h4("Every season, every " + city.info["area_word"]),
         ui.p(f"Each cell is one season against that {city.info['area_word']}'s own lines "
              "(L low, M moderate, H high, VH very high); the last column is this season so far. "
@@ -1281,7 +1278,7 @@ def severity_area_block(city: D.CityData, area: str):
         ui.p(ui.HTML(head), class_="callout"),
         ui.div(
             ui.h3(f"{name}: every season against its own lines"),
-            ui.p(f"{name}'s lines come from its 3 highest weeks in each of {len(th['top'])} "
+            ui.p(f"{name}'s lines come from its {th['k']} highest weeks in each of {len(th['top'])} "
                  f"seasons: geometric mean {city.fmt(np.exp(th['mu']))}, σ = {th['sigma']:.3f}. "
                  f"They sit at {ratio:.1f}× the citywide ones (moderate from "
                  f"{city.fmt(its['IT50'])}, high from {city.fmt(its['IT90'])}, very high from "
@@ -1337,9 +1334,8 @@ def severity_panel(city: D.CityData, m: str, area: str | None = None):
              "CDC's method would draw from Boston's own history. The top of the page rates the "
              f"city as a whole (the average of its {len(city.areas)} {city.info['areas_word']}); "
              f"further down, each {city.info['area_word']} is rated against its own history. "
-             "Season severity is not the same scale as the Low to Very high level on the other "
-             "tabs, which rates one week against usual flu-season weeks: a week can be moderate "
-             "while the season is still low-severity.", class_="blurb"),
+             "The same lines give the Low to Very high level of each week on the other tabs; a "
+             "season takes the level of its highest week.", class_="blurb"),
         ui.p(ui.HTML(head), class_="callout"),
         ui.div(
             tile("Season so far", ui.span(now.cls, class_=f"pill pill-{D.LEVEL_STATUS[now.cls]}"),
@@ -1407,10 +1403,9 @@ def severity_panel(city: D.CityData, m: str, area: str | None = None):
         ui.div(
             ui.h3("How to read this"),
             ui.tags.ul(
-                ui.tags.li("Severity belongs to the whole season and is set by its highest week. "
-                           "The levels on the other tabs (Low to Very high) rate one week against "
-                           "that neighborhood's usual flu-season weeks, so a very high week can "
-                           "sit inside a moderate season."),
+                ui.tags.li("The levels on the other tabs (Low to Very high) are one week against "
+                           "these same lines. A season is rated by its highest week, so it is "
+                           "never below any of its weeks."),
                 ui.tags.li(f"“Against a typical peak” on This week compares the latest week with "
                            f"the median past peak ({city.fmt(city.typical_peak())}). The severity "
                            "lines use the spread of past peaks as well as their middle."),
@@ -1421,8 +1416,8 @@ def severity_panel(city: D.CityData, m: str, area: str | None = None):
                 *([ui.tags.li(f"Not drawn for Chicago: its activity level is capped at "
                               f"{CHI.info['cap']}, so the same method puts the very-high line at "
                               f"{CHI.fmt(chi_its['IT98'])}, past the top of the scale, and the "
-                              f"high line at {CHI.fmt(chi_its['IT90'])}, which needs nearly every "
-                              "ZIP code at the cap at once.")] if chi_its else []),
+                              f"high line at {CHI.fmt(chi_its['IT90'])}, which needs most ZIP codes "
+                              "at or near the cap at once.")] if chi_its else []),
                 ui.tags.li("Method: M. Biggerstaff et al., “Systematic assessment of multiple "
                            "routine and near real-time indicators to classify the severity of "
                            "influenza seasons and pandemics in the United States,” American "
@@ -1521,8 +1516,10 @@ def how_panel():
                    ui.tags.li("Reporting delays and later revisions are not modeled: a forecast "
                               "uses the numbers as published on the day it is made."),
                    ui.tags.li("Levels (low to very high) compare a week with that "
-                              "neighborhood's own flu-season weeks since July 2022: below the "
-                              "median is low, top 5% is very high."),
+                              "neighborhood's intensity lines from the moving epidemic method, "
+                              "fitted on its past seasons as in the paper: moderate from the 50% "
+                              "line, high from the 90%, very high from the 98%. The Severity tab "
+                              "works them out."),
                    ui.tags.li("The 2025-26 season was used to design the model, so its numbers "
                               "are not independent evidence; the published evaluation uses "
                               "earlier seasons, and 2026-27 is scored live.")),

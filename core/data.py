@@ -66,9 +66,22 @@ DRIVERS = OWN_DRIVERS + ("neighbor",)
 
 LEVELS = ("Low", "Moderate", "High", "Very high")
 LEVEL_STATUS = {"Low": "good", "Moderate": "warning", "High": "serious", "Very high": "critical"}
-# Season severity lines: the upper limits of one-sided 50/90/98% intervals,
-# z = Phi^-1(p). A season peaking above IT50 is moderate, IT90 high, IT98 very high.
+# Intensity lines (the moving epidemic method, at CDC's 50/90/98% levels): a week
+# at or above IT50 is moderate, IT90 high, IT98 very high. z = Phi^-1(p).
 SEVERITY_Z = {"IT50": 0.0, "IT90": 1.2816, "IT98": 2.0537}
+# Seasons the lines are never fitted on: COVID-19 truncated 2019-20 and
+# suppressed the next two, as in the paper's severity analysis.
+COVID_SEASONS = ("2019-20", "2020-21", "2021-22")
+MEM_POOL = 30  # values pooled across seasons, as the mem R package sizes it
+
+
+def t_quantile(z: float, df: int) -> float:
+    """Student t quantile from the normal one (Cornish-Fisher series); within
+    1e-4 of the exact value from 5 degrees of freedom up."""
+    v = float(df)
+    return (z + (z**3 + z) / (4 * v) + (5 * z**5 + 16 * z**3 + 3 * z) / (96 * v**2)
+            + (3 * z**7 + 19 * z**5 + 17 * z**3 - 15 * z) / (384 * v**3)
+            + (79 * z**9 + 776 * z**7 + 1482 * z**5 - 1920 * z**3 - 945 * z) / (92160 * v**4))
 
 
 @dataclass
@@ -84,7 +97,6 @@ class CityData:
     trust_notes: list[str]
     geo: dict
     edges: list[tuple[str, str]]
-    thresholds: pd.DataFrame = field(default_factory=pd.DataFrame)
     runtimes: pd.DataFrame | None = None  # seconds per model, horizon and weekly origin
     drivers: pd.DataFrame | None = None   # graph-model attributions, one row per driver
     _severity: dict = field(default_factory=dict, repr=False)  # thresholds, by area (None = city)
@@ -159,23 +171,18 @@ class CityData:
         return str(f["trust"].iloc[0]) if len(f) and "trust" in f else "not backtested"
 
     # --- context ---------------------------------------------------------------
-    def level(self, area: str, value: float) -> str | None:
-        """Where a value sits against this area's own flu-season history."""
+    def level(self, area: str | None, value: float) -> str | None:
+        """A week's level: against this area's intensity lines (the same ones the
+        Severity tab draws), or the city's fixed cut points where it publishes a
+        graded scale."""
         if value is None or not np.isfinite(value):
             return None
         if "fixed_levels" in self.info:
             cuts = self.info["fixed_levels"]
             return LEVELS[sum(value >= c for c in cuts)]
-        if area not in self.thresholds.index:
+        if area is not None and area not in self.history.columns:
             return None
-        t = self.thresholds.loc[area]
-        if value < t["p50"]:
-            return "Low"
-        if value < t["p80"]:
-            return "Moderate"
-        if value < t["p95"]:
-            return "High"
-        return "Very high"
+        return self.severity_class(value, area)
 
     def seasons(self, series: pd.Series | None = None) -> dict[str, pd.Series]:
         """A weekly series (default: the citywide average) by week of season, per
@@ -284,17 +291,33 @@ class CityData:
 
     # --- how severe the season is ----------------------------------------------------
     # Citywide when `area` is None, otherwise against that area's own history.
+    def reference_seasons(self, area: str | None = None) -> dict[str, pd.Series]:
+        """The seasons the intensity lines are fitted on: every earlier season with
+        data, less the COVID-19 ones."""
+        current = self.season_label(self.origin)
+        series = self.seasons(None if area is None else self.history[area])
+        return {label: s for label, s in series.items()
+                if label < current and label not in COVID_SEASONS}
+
     def severity_thresholds(self, area: str | None = None) -> dict:
-        """Intensity thresholds by the moving epidemic method, as CDC uses it to
-        classify seasons (Biggerstaff et al., Am J Epidemiol 2018): pool the logs of
-        each past season's 3 highest weeks; IT_p = exp(mean + z_p * SD)."""
+        """Intensity thresholds by the moving epidemic method, following the mem R
+        package's defaults as the paper does: pool each reference season's k
+        highest weeks, k = round(30 / seasons); in logs, IT_p = exp(mean +
+        t_p(m-1) * sqrt(1 + 1/m) * SD), the one-sided upper limit for one more
+        week, at CDC's levels (Vega et al. 2013; Biggerstaff et al. 2018)."""
         if area not in self._severity:
-            top = {k: s.nlargest(3) for k, s in self.past_seasons(area).items()}
-            logs = np.log(np.concatenate([t.to_numpy() for t in top.values()]))
+            ref = self.reference_seasons(area)
+            k = max(1, round(MEM_POOL / len(ref)))
+            top = {label: s.nlargest(k) for label, s in ref.items()}
+            pooled = np.concatenate([t.to_numpy() for t in top.values()])
+            shift = 1.0 if (pooled <= 0).any() else 0.0  # mem adds 1 rather than drop zeros
+            logs = np.log(pooled + shift)
+            m = len(logs)
             mu, sigma = float(logs.mean()), float(logs.std(ddof=1))
+            mult = {key: t_quantile(z, m - 1) * np.sqrt(1 + 1 / m) for key, z in SEVERITY_Z.items()}
             self._severity[area] = {
-                "top": top, "mu": mu, "sigma": sigma, "n": len(logs),
-                "its": {k: float(np.exp(mu + z * sigma)) for k, z in SEVERITY_Z.items()}}
+                "top": top, "k": k, "mu": mu, "sigma": sigma, "n": m, "mult": mult,
+                "its": {key: float(np.exp(mu + c * sigma) - shift) for key, c in mult.items()}}
         return self._severity[area]
 
     def severity_class(self, value: float, area: str | None = None) -> str | None:
@@ -307,7 +330,7 @@ class CityData:
         """Every season's peak, when it came, and its class. `role` is "used" (in
         the thresholds), "current", or "skipped"."""
         series = (self.citywide() if area is None else self.history[area]).dropna()
-        used, current = self.past_seasons(area), self.season_label(self.origin)
+        used, current = self.reference_seasons(area), self.season_label(self.origin)
         rows = []
         for label, s in self.seasons(series).items():
             year = int(label[:4])
@@ -357,13 +380,6 @@ class CityData:
         return sorted(out, key=lambda a: a["rmse"])[:n]
 
 
-def _thresholds(history: pd.DataFrame) -> pd.DataFrame:
-    """Per-area percentiles of flu-season weeks (Oct-Mar) since July 2022."""
-    recent = history.loc[history.index >= "2022-07-01"]
-    season = recent[recent.index.month.isin([10, 11, 12, 1, 2, 3])]
-    return pd.DataFrame({f"p{p}": season.quantile(p / 100) for p in (50, 80, 95)})
-
-
 def _load(key: str) -> CityData | None:
     folder = DATA_DIR / key
     if not (folder / "meta.json").exists():
@@ -391,7 +407,6 @@ def _load(key: str) -> CityData | None:
         bt_scores=pd.read_csv(folder / "backtest_scores.csv"), live_scores=live_scores,
         trust_notes=trust_notes, geo=json.loads((folder / "geo.json").read_text()),
         edges=list(zip(edges["a"], edges["b"])), runtimes=runtimes, drivers=drivers)
-    city.thresholds = _thresholds(history)
     return city
 
 
