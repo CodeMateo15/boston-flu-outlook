@@ -737,8 +737,8 @@ def severity_grid(tables: dict[str, pd.DataFrame], *, names: dict[str, str], fmt
                 continue
             r = rows.loc[s]
             now = r["role"] == "current"
-            tip = (f"{names[area]}, {s}{', so far' if now else ''}&#10;{r['cls']} against its own "
-                   f"lines&#10;Peak {fmt(r['peak'])} {unit}, week of {_date(r['peak_date'])}")
+            tip = (f"{names[area]}, {s}{', so far' if now else ''}\n{r['cls']} against its own "
+                   f"lines\nPeak {fmt(r['peak'])} {unit}, week of {_date(r['peak_date'])}")
             out.append(f'<g data-tip="{esc(tip)}"><rect class="odds-cell sev-{LEVEL_STATUS[r["cls"]]}'
                        f'{" now" if now else ""}" x="{L + j * cw + 2:.1f}" y="{y + 2}" '
                        f'width="{cw - 4:.1f}" height="{row_h - 4}" rx="3"/><text class="odds-val" '
