@@ -305,7 +305,7 @@ h4 { font-size: 15px; margin: 18px 0 6px; color: var(--text-secondary); }
    reference palette's dark column), not flipped from the light ones.
    ===================================================================== */
 :root, :root[data-bs-theme="light"] {
-  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --ref: #898781;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4; --ref: #898781;
   --grid: #e1e0d9; --axis: #c3c2b7; --past: #c3c2b7;
   /* Sequential blue, light -> dark: low values recede toward the surface. */
   --seq-0: #cde2fb; --seq-1: #9ec5f4; --seq-2: #6da7ec;
@@ -319,7 +319,7 @@ h4 { font-size: 15px; margin: 18px 0 6px; color: var(--text-secondary); }
 }
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-bs-theme="light"])) {
-    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --ref: #94938a;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --ref: #94938a;
     --grid: #2c2c2a; --axis: #383835; --past: #4a4a45;
     --seq-0: #0d366b; --seq-1: #184f95; --seq-2: #256abf;
     --seq-3: #3987e5; --seq-4: #6da7ec; --seq-5: #b7d3f6;
@@ -331,7 +331,7 @@ h4 { font-size: 15px; margin: 18px 0 6px; color: var(--text-secondary); }
   }
 }
 :root[data-bs-theme="dark"] {
-  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --ref: #94938a;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --ref: #94938a;
   --grid: #2c2c2a; --axis: #383835; --past: #4a4a45;
   /* In dark mode the ramp runs the other way: low values are the dark steps,
      so "near zero" still recedes into the surface. */
@@ -394,12 +394,17 @@ h4 { font-size: 15px; margin: 18px 0 6px; color: var(--text-secondary); }
 .chart .dot { stroke: var(--surface-1); stroke-width: 2; }
 .chart .dot.obs { fill: var(--text-primary); }
 .chart .s1 { --c: var(--s1); } .chart .s2 { --c: var(--s2); }
-.chart .s3 { --c: var(--s3); } .chart .s4 { --c: var(--s4); } .chart .sref { --c: var(--ref); }
-.chart .line.s1, .chart .line.s2, .chart .line.s3, .chart .line.s4, .chart .line.sref { stroke: var(--c); }
-.chart .dot.s1, .chart .dot.s2, .chart .dot.s3, .chart .dot.s4, .chart .dot.sref { fill: var(--c); }
+.chart .s3 { --c: var(--s3); } .chart .s4 { --c: var(--s4); } .chart .s5 { --c: var(--s5); }
+.chart .sref { --c: var(--ref); }
+.chart .line.s1, .chart .line.s2, .chart .line.s3, .chart .line.s4, .chart .line.s5,
+.chart .line.sref { stroke: var(--c); }
+.chart .dot.s1, .chart .dot.s2, .chart .dot.s3, .chart .dot.s4, .chart .dot.s5,
+.chart .dot.sref { fill: var(--c); }
 /* Slot 4 sits close to slot 2 (orange) when every model is on one chart, so it is
-   dashed as well: identity never rests on colour alone. */
+   dashed as well, and slot 5 (the average) close to slot 3 for deuteranopes, so it
+   is dotted: identity never rests on colour alone. */
 .chart .line.s4 { stroke-dasharray: 6 4; }
+.chart .line.s5 { stroke-dasharray: 1.5 4; }
 .chart .band95 { fill: var(--c); fill-opacity: 0.14; stroke: none; }
 .chart .band50 { fill: var(--c); fill-opacity: 0.28; stroke: none; }
 .chart .hit { fill: transparent; }
@@ -477,6 +482,8 @@ h4 { font-size: 15px; margin: 18px 0 6px; color: var(--text-secondary); }
 .sw.s3 { background: var(--s3); } .sw.sref { background: var(--ref); }
 .sw.s4 { background: repeating-linear-gradient(90deg, var(--s4) 0 6px, transparent 6px 9px); }
 .sw-band.s4 { background: var(--s4); }
+.sw.s5 { background: repeating-linear-gradient(90deg, var(--s5) 0 3px, transparent 3px 6px); }
+.sw-band.s5 { background: var(--s5); }
 .sw-band.b95 { opacity: 0.25; } .sw-band.b50 { opacity: 0.5; }
 .sw.past { background: var(--past); }
 

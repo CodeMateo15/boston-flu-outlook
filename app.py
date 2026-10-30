@@ -590,7 +590,7 @@ def server(input, output, session):
                     ui.input_select("area", "Neighborhood",
                                     {a: short(B, a) for a in B.areas}, selected=area),
                     ui.input_checkbox_group(
-                        "models", "Models", {m: D.MODEL_SHORT[m] for m in B.models},
+                        "models", "Models", {m: D.MODEL_SHORT.get(m, m) for m in B.models},
                         selected=[D.PRIMARY] + (["persistence"] if m == "analyst" else []),
                         inline=True),
                     class_="controls"),
@@ -645,7 +645,8 @@ def server(input, output, session):
             "table": ui.nav_panel(
                 V.TAB_TITLES["table"],
                 ui.div(ui.input_select("tbl_city", "City", {k: c.label for k, c in D.CITIES.items()}),
-                       ui.input_select("tbl_model", "Model", {m: D.MODEL_SHORT[m] for m in B.models}),
+                       ui.input_select("tbl_model", "Model",
+                                       {m: D.MODEL_SHORT.get(m, m) for m in B.models}),
                        class_="controls"),
                 ui.output_data_frame("table"),
                 value="table"),
@@ -761,12 +762,12 @@ def server(input, output, session):
                 "against, so it has no range. Tick a model to see a forecast.")
         else:
             sentence = reported + (
-                f"The {D.MODEL_SHORT[models[0]].lower()} expects "
+                f"The {D.MODEL_SHORT.get(models[0], models[0]).lower()} expects "
                 f"<strong>{B.fmt(first['predicted'])}</strong> next week, and would be "
                 f"surprised by anything outside {B.fmt(first['lower'])}–{B.fmt(first['upper'])}. "
                 f"For the week of {week_span(last['target_date'])}: {B.fmt(last['predicted'])} "
                 f"({B.fmt(last['lower'])}–{B.fmt(last['upper'])}).")
-        badges = ui.div(*[ui.span(ui.tags.b(D.MODEL_SHORT[m] + ": "),
+        badges = ui.div(*[ui.span(ui.tags.b(D.MODEL_SHORT.get(m, m) + ": "),
                                   trust_badge(B.trust(m, 1)), " ")
                           for m in models if m != "persistence"],
                         class_="legend")
@@ -946,8 +947,8 @@ def chicago_panel():
 def record_body(city: D.CityData, m: str):
     comp = city.comparison[city.comparison["model"].isin(city.models)]
     seasons = ", ".join(city.meta.get("backtest_seasons") or []) or "past seasons"
-    header = [ui.tags.th("Weeks ahead")] + [ui.tags.th(D.MODEL_SHORT[mdl]) for mdl in city.models
-                                            if mdl != "persistence"]
+    header = [ui.tags.th("Weeks ahead")] + [ui.tags.th(D.MODEL_SHORT.get(mdl, mdl))
+                                            for mdl in city.models if mdl != "persistence"]
     body = []
     for h in city.horizons:
         cells = [ui.tags.td(f"{h}")]
@@ -1515,6 +1516,10 @@ def how_panel():
                      if CHI else []),
                    ui.tags.li("Reporting delays and later revisions are not modeled: a forecast "
                               "uses the numbers as published on the day it is made."),
+                   ui.tags.li("“Average” is the four models' forecasts averaged point by point "
+                              "along each range (every quantile), the way CDC's forecasting hubs "
+                              "combine teams. It is not trained on its own, and the Track record "
+                              "tab scores it like the others."),
                    ui.tags.li("Levels (low to very high) compare a week with that "
                               "neighborhood's intensity lines from the moving epidemic method, "
                               "fitted on its past seasons as in the paper: moderate from the 50% "

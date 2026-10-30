@@ -24,13 +24,16 @@ MODEL_NAMES = {
     "lstm": "LSTM (sequence model)",
     "colagnn": "Cola-GNN (graph model from the literature)",
     "arima": "ARIMA (seasonal statistical model)",
+    "avg": "Average of the four models",
     "persistence": "Same as last week",
 }
 MODEL_SHORT = {"gnn_st": "Graph model", "lstm": "LSTM", "colagnn": "Cola-GNN", "arima": "ARIMA",
-               "persistence": "Same as last week"}
-# Colour follows the model, never its rank: categorical slots 1-4 (slot 4 also
-# dashed), and the reference in neutral ink so it never reads as a competitor.
-MODEL_CLASS = {"gnn_st": "s1", "lstm": "s2", "colagnn": "s3", "arima": "s4", "persistence": "sref"}
+               "avg": "Average", "persistence": "Same as last week"}
+# Colour follows the model, never its rank: categorical slots 1-5 (slot 4 also
+# dashed, slot 5 dotted), and the reference in neutral ink so it never reads as a
+# competitor.
+MODEL_CLASS = {"gnn_st": "s1", "lstm": "s2", "colagnn": "s3", "arima": "s4", "avg": "s5",
+               "persistence": "sref"}
 PRIMARY = "gnn_st"
 
 CITY_INFO = {

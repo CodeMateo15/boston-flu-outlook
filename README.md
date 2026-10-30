@@ -2,7 +2,10 @@
 
 Neighborhood flu forecasts for Boston, 1–4 weeks ahead, from the graph neural
 network in the GNN-Influenza-Boston project, with Chicago alongside as a second city.
-Built in Shiny for Python for the Boston Public Health Commission.
+Built in Shiny for Python for the Boston Public Health Commission. The graph model is
+shown beside an LSTM, Cola-GNN, ARIMA, and "Average", the four models' quantiles
+averaged (the way CDC's forecasting hubs combine teams), all scored against
+"same as last week".
 
 **Experimental research forecasts. Not an official BPHC product.**
 
