@@ -2,7 +2,7 @@
   "city": "boston",
   "label": "Boston",
   "season": "2026_27",
-  "origin": "2026-10-18",
+  "origin": "2026-10-25",
   "horizons": [
     1,
     2,
@@ -15,6 +15,16 @@
     "colagnn",
     "arima"
   ],
+  "ensemble": {
+    "name": "avg",
+    "members": [
+      "gnn_st",
+      "lstm",
+      "colagnn",
+      "arima"
+    ],
+    "method": "quantile mean"
+  },
   "backtest": "live/runs/boston/backtest_20261013-arima",
   "backtest_seasons": [
     "2023-24",
@@ -72,12 +82,13 @@
     },
     "updated": "2026-10-19T18:26:56"
   },
-  "issued": "2026-10-26T16:20:52",
+  "issued": "2026-11-02T14:22:48",
   "quick": false,
   "archived_origins": [
     "2026-09-27",
     "2026-10-04",
     "2026-10-11",
-    "2026-10-18"
+    "2026-10-18",
+    "2026-10-25"
   ]
 }
