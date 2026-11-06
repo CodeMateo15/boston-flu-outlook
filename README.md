@@ -1,5 +1,7 @@
 # Boston Flu Outlook
 
+**Website**: https://codemateo15-boston-flu-outlook.share.connect.posit.cloud/
+
 Neighborhood flu forecasts for Boston, 1–4 weeks ahead, from the graph neural
 network in the GNN-Influenza-Boston project, with Chicago alongside as a second city.
 Built in Shiny for Python for the Boston Public Health Commission. The graph model is
@@ -101,10 +103,10 @@ and `.python-version` (3.12).
 
 ## Data
 
-- Boston: Boston Public Health Commission public influenza dashboard (weekly ED
+- Boston: [Boston Public Health Commission public influenza dashboard](https://www.boston.gov/government/cabinets/boston-public-health-commission/influenza-flu-dashboard) (weekly ED
   visits for influenza-like illness per 100,000, by neighborhood).
 - Chicago: Chicago Department of Public Health, "Influenza Risk Level by ZIP Code",
-  City of Chicago Data Portal.
+  [City of Chicago Data Portal](https://data.cityofchicago.org/d/8vvr-jv2g).
 - Boundaries: City of Boston official neighborhoods; City of Chicago ZIP code boundaries.
 - Weather (a model input): Open-Meteo.com (CC BY 4.0).
 
