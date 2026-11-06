@@ -2,7 +2,7 @@
   "city": "chicago",
   "label": "Chicago",
   "season": "2026_27",
-  "origin": "2026-10-18",
+  "origin": "2026-10-25",
   "horizons": [
     1,
     2,
@@ -15,6 +15,16 @@
     "colagnn",
     "arima"
   ],
+  "ensemble": {
+    "name": "avg",
+    "members": [
+      "gnn_st",
+      "lstm",
+      "colagnn",
+      "arima"
+    ],
+    "method": "quantile mean"
+  },
   "backtest": "live/runs/chicago/backtest_20261016-arima",
   "backtest_seasons": [
     "2023-24",
@@ -72,13 +82,14 @@
     },
     "updated": "2026-10-24T04:50:35"
   },
-  "issued": "2026-10-30T15:44:11",
+  "issued": "2026-11-06T14:59:53",
   "quick": false,
   "archived_origins": [
     "2026-09-20",
     "2026-09-27",
     "2026-10-04",
     "2026-10-11",
-    "2026-10-18"
+    "2026-10-18",
+    "2026-10-25"
   ]
 }
