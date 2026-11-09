@@ -1,10 +1,10 @@
 # Data status
 
-Written by `weekly_update.py` on 2026-11-06 15:00. Check here before an update to see whether a city has a new week.
+Written by `weekly_update.py` on 2026-11-09 14:31. Check here before an update to see whether a city has a new week.
 
 | City | Newest week in the source | Newest forecast | In the app | New week to run? |
 |---|---|---|---|---|
-| Boston | Oct 25 - Oct 31 (BPHC CSVs in ~/GNN-Influenza-Boston/Data/BPHC Flu Data) | Oct 25 - Oct 31 | 2026-10-25 | no |
+| Boston | Nov 1 - Nov 7 (BPHC CSVs in ~/GNN-Influenza-Boston/Data/BPHC Flu Data) | Nov 1 - Nov 7 | 2026-11-01 | no |
 | Chicago | Oct 25 - Oct 31 (Chicago portal, posted Fri Nov 6 12:34 CT) | Oct 25 - Oct 31 | 2026-10-25 | no |
 
 Weeks run Sunday to Saturday. Forecast folders, and `origin` in the app, are named by the start of the newest week they use: forecast 2026-10-18 uses data through Sat Oct 24 and forecasts the four weeks after it.
