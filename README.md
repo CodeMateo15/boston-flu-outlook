@@ -95,6 +95,25 @@ then commit `data/` and push; Connect Cloud redeploys from the repo. A forecast 
 with smoke-test settings carries `"quick": true` in its metadata, and the app shows
 a "preview numbers" banner on every page.
 
+## Offline copy (one HTML file)
+
+```bash
+.venv/bin/python export_html.py --out boston_flu_outlook.html    # from data/, both cities
+```
+
+writes the whole site as a single HTML file that opens from disk with no server and
+no network: every view the app computes on request is rendered ahead of time
+through the same layout (`build_tabs`), and a short page script shows the one the
+controls ask for.
+
+BPHC makes the same file from its own weekly forecast with
+`BPHC/code/make_site.py` in the research repo, which uses a copy of `app.py`,
+`core/`, `www/` and `export_html.py`. After changing any of those, refresh the copy:
+
+```bash
+.venv/bin/python vendor_bphc.py      # -> ~/GNN-Influenza-Boston/BPHC/code/outlook/
+```
+
 ## Deploying (Posit Connect Cloud)
 
 Connect Cloud deploys straight from this GitHub repository. New content → Shiny →

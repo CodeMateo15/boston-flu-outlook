@@ -22,10 +22,11 @@ also saved to logs/.
 Every run (and `--status` alone, which runs nothing else) rewrites DATA_STATUS.md:
 the newest week each source has, the newest forecast, and what the app shows.
 
-If `run` stops with "The weekly rates before 2026-06-01 differ ... (a revised
-export?)", the source revised weeks the models were trained on. They need
-retraining once (`live_forecast.py train`, about 2.5 h for Boston), see
-areaFluForecast's scripts/live_forecast.py.
+Sources keep revising old weeks. The frozen runs read the weeks before the season
+start from live/models/<season>/<city>/pinned_rates.csv (what the models were
+trained on), so a revised June or 2025 week is listed in the log and ignored
+instead of stopping the run. Weeks from the season start on always come from the
+new download. Only a new season (or new areas) needs `live_forecast.py train`.
 """
 
 from __future__ import annotations

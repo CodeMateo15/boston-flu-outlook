@@ -19,10 +19,11 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import shutil
 from pathlib import Path
 
 import pandas as pd
+
+from core.stage import stage
 
 APP_DIR = Path(__file__).parent
 HOME = Path.home()
@@ -152,23 +153,6 @@ def build_geo(city: str, areas: list[str]) -> dict:
 
 # --- copying -------------------------------------------------------------------
 
-def with_coverage50(scores: pd.DataFrame, meta: dict) -> pd.DataFrame:
-    """Archives made before the package scored the 50% range lack `coverage50`.
-    Recompute it from the saved backtest predictions (25th-75th percentile),
-    so the frozen archive itself is never edited."""
-    if "coverage50" in scores:
-        return scores
-    predictions = LIVE.parent / meta.get("backtest", "") / "predictions.csv"
-    if not predictions.exists():
-        print(f"  no {predictions}: the 50% coverage will be missing")
-        return scores
-    p = pd.read_csv(predictions, usecols=["model", "season", "horizon", "actual", "q0.250", "q0.750"])
-    p = p[p["actual"].notna()]
-    p["covered50"] = (p["actual"] >= p["q0.250"]) & (p["actual"] <= p["q0.750"])
-    cover = p.groupby(["model", "season", "horizon"])["covered50"].mean().rename("coverage50")
-    return scores.merge(cover.reset_index(), on=["model", "season", "horizon"], how="left")
-
-
 def newest_archive(city: str) -> Path:
     folders = sorted(p.parent for p in LIVE.glob(f"[0-9][0-9][0-9][0-9]_[0-9][0-9]/{city}/*/meta.json"))
     if not folders:
@@ -178,44 +162,10 @@ def newest_archive(city: str) -> Path:
 
 
 def publish(city: str, folder: Path, data_folder: Path | None) -> None:
-    out = APP_DIR / "data" / city
-    out.mkdir(parents=True, exist_ok=True)
-    meta = json.loads((folder / "meta.json").read_text())
-    for name in ("forecast.csv", "backtest_comparison.csv", "trust.md"):
-        shutil.copy(folder / name, out / name)
-    with_coverage50(pd.read_csv(folder / "backtest_scores.csv"), meta).to_csv(
-        out / "backtest_scores.csv", index=False)
-    history = pd.read_csv(folder / "rates_asof.csv", index_col=0)
-    history.index.name = "week"
-    history.round(3).to_csv(out / "history.csv")
-    scores = folder.parent / "scores.csv"
-    if scores.exists():
-        shutil.copy(scores, out / "live_scores.csv")
-    elif (out / "live_scores.csv").exists():
-        (out / "live_scores.csv").unlink()
-    # What drove the graph model (live_forecast.py explain); only frozen-model
-    # forecasts have it.
-    if (folder / "drivers.csv").exists():
-        shutil.copy(folder / "drivers.csv", out / "drivers.csv")
-    elif (out / "drivers.csv").exists():
-        (out / "drivers.csv").unlink()
-    # How long each model took, for every archived origin that recorded it.
-    timed = [pd.read_csv(p / "runtime.csv").assign(origin=p.name)
-             for p in sorted(folder.parent.iterdir()) if (p / "runtime.csv").exists()]
-    if timed:
-        pd.concat(timed, ignore_index=True).to_csv(out / "runtimes.csv", index=False)
-    elif (out / "runtimes.csv").exists():
-        (out / "runtimes.csv").unlink()
     data_folder = data_folder or LIVE / city
-    edges = pd.read_csv(data_folder / "edges.csv", dtype=str)
-    areas = list(history.columns)
-    edges = edges[edges["a"].isin(areas) & edges["b"].isin(areas)]
-    edges.to_csv(out / "edges.csv", index=False)
-    (out / "geo.json").write_text(json.dumps(build_geo(city, areas), separators=(",", ":")))
-    # Every archived origin, newest last, so the app can show how many weeks are on record.
-    origins = sorted(p.name for p in folder.parent.iterdir() if (p / "meta.json").exists())
-    meta["archived_origins"] = origins
-    (out / "meta.json").write_text(json.dumps(meta, indent=2) + "\n")
+    out = APP_DIR / "data" / city
+    areas = list(pd.read_csv(folder / "rates_asof.csv", index_col=0, nrows=0).columns)
+    meta = stage(city, folder, out, edges=data_folder / "edges.csv", geo=build_geo(city, areas))
     print(f"{city}: origin {meta['origin']} -> {out}"
           + ("  (QUICK smoke-test numbers: the app will say so)" if meta.get("quick") else ""))
 

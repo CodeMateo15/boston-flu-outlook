@@ -116,14 +116,18 @@ def legend(models: list[str], bands: bool = True, observed: bool = True):
     if observed:
         keys.append(ui.span(ui.span(class_="sw obs"), "Reported", class_="key"))
     # Same rule as C.fan_chart: the bands belong to the first model that is not
-    # "same as last week".
+    # "same as last week". data-series lets the offline copy (export_html.py) hide
+    # a model's keys when its box is unticked.
     banded = next((m for m in models if m != "persistence"), None)
     for m in models:
         cls = D.MODEL_CLASS.get(m, "s1")
-        keys.append(ui.span(ui.span(class_=f"sw {cls}"), D.MODEL_SHORT.get(m, m), class_="key"))
+        keys.append(ui.span(ui.span(class_=f"sw {cls}"), D.MODEL_SHORT.get(m, m), class_="key",
+                            **{"data-series": cls}))
         if m == banded and bands:
-            keys.append(ui.span(ui.span(class_=f"sw-band {cls} b50"), "likely range (50%)", class_="key"))
-            keys.append(ui.span(ui.span(class_=f"sw-band {cls} b95"), "plausible range (95%)", class_="key"))
+            keys.append(ui.span(ui.span(class_=f"sw-band {cls} b50"), "likely range (50%)",
+                                class_="key", **{"data-series": cls}))
+            keys.append(ui.span(ui.span(class_=f"sw-band {cls} b95"), "plausible range (95%)",
+                                class_="key", **{"data-series": cls}))
     return ui.div(*keys, class_="legend")
 
 
@@ -508,8 +512,15 @@ def method_block(city: D.CityData, area: str, h: int, analyst: bool):
 
 # --- UI -------------------------------------------------------------------------------
 
-def topbar():
-    chips = [ui.span(ui.HTML(f"BPHC data through <strong>{week_end(B.origin)}</strong>"), class_="chip"),
+def live_slider(id: str, label: str, lo: int, hi: int, value: int, interval: int):
+    return ui.input_slider(id, label, lo, hi, value, step=1, ticks=True,
+                           animate=ui.AnimationOptions(interval=interval, loop=False))
+
+
+def topbar(theme=None):
+    """`theme` replaces the dark-mode switch (export_html.py passes a plain button,
+    since the switch is a bslib web component that needs the Shiny runtime)."""
+    chips =[ui.span(ui.HTML(f"BPHC data through <strong>{week_end(B.origin)}</strong>"), class_="chip"),
              ui.span(ui.HTML(f"Forecast issued <strong>{date(B.meta.get('issued', B.origin))}</strong>"),
                      class_="chip"),
              ui.span(f"{len(B.meta.get('archived_origins', [1]))} weekly forecast(s) on record",
@@ -521,9 +532,20 @@ def topbar():
                ui.div(*chips, class_="fresh"), class_="brand-block"),
         ui.div(ui.input_select("audience", "I am viewing as", V.MODES, selected="briefing"),
                ui.div(ui.tags.label("Theme", class_="theme-label"),
-                      ui.input_dark_mode(id="theme", mode="light"), class_="theme-block"),
+                      theme if theme is not None else ui.input_dark_mode(id="theme", mode="light"),
+                      class_="theme-block"),
                class_="audience-block"),
         class_="topbar")
+
+
+def footer():
+    return ui.div(
+        ui.span(f"Forecast origin {B.meta['origin']}", class_="version-chip"),
+        "Experimental research forecasts from the GNN-Influenza-Boston project at "
+        "Northeastern University, built on the Boston Public Health Commission's public "
+        "dashboard data. Not an official BPHC product, and not medical advice. Forecasts "
+        "are archived unchanged every week and scored against what actually happened.",
+        class_="disclaimer")
 
 
 app_ui = ui.page_fluid(
@@ -536,14 +558,230 @@ app_ui = ui.page_fluid(
     ),
     topbar(),
     ui.output_ui("tabs"),
-    ui.div(
-        ui.span(f"Forecast origin {B.meta['origin']}", class_="version-chip"),
-        "Experimental research forecasts from the GNN-Influenza-Boston project at "
-        "Northeastern University, built on the Boston Public Health Commission's public "
-        "dashboard data. Not an official BPHC product, and not medical advice. Forecasts "
-        "are archived unchanged every week and scored against what actually happened.",
-        class_="disclaimer"),
+    footer(),
 )
+
+
+# --- tab shell -----------------------------------------------------------------------
+
+def build_tabs(m: str, area: str, ribbon_set: str = "all", *, out=ui.output_ui,
+               slider=live_slider, download=ui.download_button, table_out=ui.output_data_frame):
+    """Every tab for one audience. The server passes Shiny's output placeholders;
+    export_html.py passes pre-rendered content for each one, so the offline copy is
+    built from this same layout."""
+    hmax_b = max(B.horizons)
+    panels = {
+        "outlook": ui.nav_panel(
+            V.TAB_TITLES["outlook"],
+            preview_banner(B),
+            ui.p(ui.HTML(headline(B)), class_="callout"),
+            city_tiles(B),
+            ui.div(
+                ui.div(
+                    ui.h3("Where flu-like illness is heading"),
+                    ui.p("Drag the slider or press play to step the map from this week "
+                         "through each forecast week. Click a neighborhood for its detail.",
+                         class_="blurb"),
+                    slider("h", "Weeks ahead", 0, hmax_b, 0, 1400),
+                    out("boston_map"), class_="card"),
+                ui.div(ui.h3("Ranked"),
+                       ui.p("Same numbers as the map, highest first.", class_="blurb"),
+                       out("boston_ranked"), class_="card"),
+                class_="grid-2"),
+            out("boston_citywide"),
+            value="outlook"),
+        "detail": ui.nav_panel(
+            V.TAB_TITLES["detail"],
+            preview_banner(B),
+            ui.div(
+                ui.input_select("area", "Neighborhood",
+                                {a: short(B, a) for a in B.areas}, selected=area),
+                ui.input_checkbox_group(
+                    "models", "Models", {m: D.MODEL_SHORT.get(m, m) for m in B.models},
+                    selected=[D.PRIMARY] + (["persistence"] if m == "analyst" else []),
+                    inline=True),
+                class_="controls"),
+            out("detail_body"),
+            ui.div(
+                ui.h3("Is this season early, or big?"),
+                ui.input_radio_buttons("ribbon_set", None, RIBBON_SETS, selected=ribbon_set,
+                                       inline=True)
+                if B.season_roles() else None,
+                out("detail_ribbons"),
+                class_="chart-card"),
+            value="detail"),
+        "drivers": ui.nav_panel(
+            V.TAB_TITLES["drivers"],
+            preview_banner(B),
+            ui.h2("What's driving the forecast"),
+            ui.p("The graph model reads each neighborhood's recent weeks, its weather, the "
+                 "time of year and its neighbors' recent weeks. This page splits each "
+                 "forecast into those pieces, so you can see whether a rise is local "
+                 "momentum, spillover from next door, or just the season.", class_="blurb"),
+            ui.div(
+                ui.input_select("drv_area", "Neighborhood",
+                                {a: short(B, a) for a in B.areas}, selected=area),
+                slider("drv_h", "Weeks ahead", min(B.horizons), hmax_b, min(B.horizons), 1600),
+                class_="controls"),
+            ui.p("Press play to watch the picture change as the forecast looks further "
+                 "ahead: this week's reading matters most next week, while the season and "
+                 "the neighbors matter more by week four.", class_="note"),
+            out("drv_body"),
+            value="drivers") if B.has_drivers else None,
+        "severity": ui.nav_panel(V.TAB_TITLES["severity"], severity_panel(B, m, area, out=out),
+                                 value="severity"),
+        "all": ui.nav_panel(
+            V.TAB_TITLES["all"],
+            preview_banner(B),
+            ui.h2("Every neighborhood at once"),
+            ui.p("The graph model's selling point is that neighboring areas move "
+                 "together, so it helps to see them side by side. Each card shows the "
+                 "last 12 reported weeks (black) and the next four (blue, with the "
+                 "plausible range). Click a card for its detail.", class_="blurb"),
+            ui.div(ui.input_select("sort", "Sort by", SORTS, selected="rise"),
+                   ui.input_switch("shared", "Same scale for every card", True),
+                   class_="controls"),
+            out("multiples"),
+            value="all"),
+        "record": ui.nav_panel(V.TAB_TITLES["record"], out("record"), value="record"),
+        "chicago": ui.nav_panel(V.TAB_TITLES["chicago"], chicago_panel(out=out, slider=slider), value="chicago"),
+        "table": ui.nav_panel(
+            V.TAB_TITLES["table"],
+            ui.div(ui.input_select("tbl_city", "City", {k: c.label for k, c in D.CITIES.items()}),
+                   ui.input_select("tbl_model", "Model",
+                                   {m: D.MODEL_SHORT.get(m, m) for m in B.models}),
+                   class_="controls"),
+            table_out("table"),
+            value="table"),
+        "how": ui.nav_panel(V.TAB_TITLES["how"], how_panel(download=download), value="how"),
+    }
+    wanted = [t for t in V.TABS[m] if (t != "chicago" or CHI is not None)
+              and panels[t] is not None]
+    return ui.navset_card_tab(*[panels[t] for t in wanted], id="nav", selected=wanted[0])
+
+
+# --- dynamic bodies, as plain functions of the inputs they read -------------------------
+
+def lead_first(models: list[str]) -> list[str]:
+    """Bands go to the graph model when it is shown, so they mean the same thing
+    everywhere; "same as last week" goes last, since it has no range."""
+    return sorted(models, key=lambda m: (m == "persistence", m != D.PRIMARY))
+
+
+def detail_html(area: str, models: list[str]):
+    models = lead_first(models)
+    rows = B.rows(models[0], area)
+    now = B.latest()[area]
+    first, last = rows.iloc[0], rows.iloc[-1]
+    lvl_now = B.level(area, now)
+    reported = (
+        f"In <strong>{short(B, area)}</strong>, {B.fmt(now)} {B.info['unit_short']} were "
+        f"reported for the week of {week_span(B.origin)} ({(lvl_now or 'unrated').lower()} "
+        f"for this neighborhood). ")
+    if models[0] == "persistence":
+        sentence = reported + (
+            "“Same as last week” carries that number forward unchanged to every week "
+            "ahead. It is not a forecast: it is the yardstick the models are scored "
+            "against, so it has no range. Tick a model to see a forecast.")
+    else:
+        sentence = reported + (
+            f"The {D.MODEL_SHORT.get(models[0], models[0]).lower()} expects "
+            f"<strong>{B.fmt(first['predicted'])}</strong> next week, and would be "
+            f"surprised by anything outside {B.fmt(first['lower'])}–{B.fmt(first['upper'])}. "
+            f"For the week of {week_span(last['target_date'])}: {B.fmt(last['predicted'])} "
+            f"({B.fmt(last['lower'])}–{B.fmt(last['upper'])}).")
+    badges = ui.div(*[ui.span(ui.tags.b(D.MODEL_SHORT.get(m, m) + ": "),
+                              trust_badge(B.trust(m, 1)), " ",
+                              **{"data-series": D.MODEL_CLASS.get(m, "s1")})
+                      for m in models if m != "persistence"],
+                    class_="legend")
+    teaser = driver_teaser(B, area)
+    return ui.div(
+        ui.p(ui.HTML(sentence), class_="callout"),
+        ui.p(teaser, " ", ui.input_action_link("to_drivers", "See what's driving it →"),
+             class_="teaser") if teaser else None,
+        ui.div(ui.span("Past-season check, 1 week ahead:", class_="note"), badges),
+        fan_block(B, area, models, f"{short(B, area)}: the next four weeks",
+                  f"{B.info['unit'].capitalize()}. The vertical line is the latest "
+                  "reported week; hover anywhere for that week's numbers."))
+
+
+def drivers_top(area: str, h: int, analyst: bool):
+    wf = B.waterfall(area, h)
+    return ui.div(
+        ui.p(ui.HTML(driver_sentence(B, area, h, wf)), class_="callout"),
+        ui.div(waterfall_block(B, area, h, analyst), spill_block(B, area, h, "drv_click"),
+               class_="grid-2"))
+
+
+def drivers_bottom(area: str, h: int, analyst: bool):
+    return ui.div(timeline_block(B, area, h), method_block(B, area, h, analyst))
+
+
+def drivers_body(area: str, h: int, analyst: bool):
+    # Three pieces so export_html.py can render the matrix once per week ahead
+    # rather than once per neighborhood.
+    return ui.div(drivers_top(area, h, analyst), matrix_block(B, area, h, "drv_click"),
+                  drivers_bottom(area, h, analyst))
+
+
+SORTS = {"rise": "Fastest rising", "now": "Highest now", "name": "A–Z"}
+
+
+def multiples_html(sort: str, shared: bool):
+    latest = B.latest()
+    hmax = max(B.horizons)
+    ahead = B.at(D.PRIMARY, hmax)
+    growth = (ahead / latest.replace(0, np.nan)) - 1
+    order = {"rise": growth.sort_values(ascending=False).index,
+             "now": latest.sort_values(ascending=False).index,
+             "name": sorted(B.areas, key=lambda a: short(B, a))}[sort]
+    shared_top = max(B.history.iloc[-12:].max().max(),
+                     B.forecast.loc[B.forecast["model"] == D.PRIMARY, "upper"].max())
+    cards = []
+    for area in order:
+        f = B.rows(D.PRIMARY, area)
+        top = shared_top if shared else max(B.history[area].iloc[-12:].max(), f["upper"].max())
+        g = growth.get(area, np.nan)
+        arrow, _ = direction(g)
+        cards.append(ui.div(
+            ui.div(ui.span(short(B, area), class_="mini-name"),
+                   ui.span(f"{B.fmt(latest[area])} → {B.fmt(ahead[area])}", class_="mini-val"),
+                   class_="mini-head"),
+            ui.HTML(C.spark(B.history[area], f, ymax=top * 1.05)),
+            ui.div(ui.span(level_pill(B.level(area, latest[area]))),
+                   ui.span(f"{arrow} {g * 100:+.0f}% in {hmax} wk" if np.isfinite(g) else ""),
+                   class_="mini-foot"),
+            class_="mini", **{"data-area": area, "data-input": "area_click", "tabindex": "0",
+                              "data-tip": f"{short(B, area)}\nNow {B.fmt(latest[area])}, "
+                                          f"in {hmax} weeks {B.fmt(ahead[area])}"}))
+    return ui.div(*cards, class_="multiples")
+
+
+def chicago_zip(z: str):
+    return fan_block(CHI, z, [D.PRIMARY], f"{short(CHI, z)}: the next weeks",
+                     "Activity level, 1 to 10. Values are capped at 10, so a very "
+                     "high peak and a merely high one can look the same.")
+
+
+def citywide_block(m: str):
+    models = [D.PRIMARY] + (["persistence"] if m == "analyst" else [])
+    return fan_block(B, None, models, "Citywide",
+                     f"Average across the {len(B.areas)} neighborhoods, "
+                     f"{B.info['unit']}. Hover for weekly values.")
+
+
+def table_frame(city: D.CityData, model: str) -> pd.DataFrame:
+    f = city.rows(model)
+    return pd.DataFrame({
+        city.info["area_word"]: [short(city, a) for a in f["area"]],
+        "weeks ahead": f["horizon"], "week of": f["target_date"].dt.strftime("%Y-%m-%d"),
+        "median": f["predicted"].round(2), "95% low": f["lower"].round(2),
+        "95% high": f["upper"].round(2), "past-season check": f["trust"]})
+
+
+def download_name(kind: str) -> str:
+    return f"boston_flu_forecast_{B.meta['origin']}{'_flusight' if kind == 'flusight' else ''}.csv"
 
 
 # --- server ----------------------------------------------------------------------------
@@ -561,100 +799,7 @@ def server(input, output, session):
         with reactive.isolate():
             area = sel_area()
             ribbon_set = input.ribbon_set() if "ribbon_set" in input else "all"
-        hmax_b = max(B.horizons)
-        panels = {
-            "outlook": ui.nav_panel(
-                V.TAB_TITLES["outlook"],
-                preview_banner(B),
-                ui.p(ui.HTML(headline(B)), class_="callout"),
-                city_tiles(B),
-                ui.div(
-                    ui.div(
-                        ui.h3("Where flu-like illness is heading"),
-                        ui.p("Drag the slider or press play to step the map from this week "
-                             "through each forecast week. Click a neighborhood for its detail.",
-                             class_="blurb"),
-                        ui.input_slider("h", "Weeks ahead", 0, hmax_b, 0, step=1, ticks=True,
-                                        animate=ui.AnimationOptions(interval=1400, loop=False)),
-                        ui.output_ui("boston_map"), class_="card"),
-                    ui.div(ui.h3("Ranked"),
-                           ui.p("Same numbers as the map, highest first.", class_="blurb"),
-                           ui.output_ui("boston_ranked"), class_="card"),
-                    class_="grid-2"),
-                ui.output_ui("boston_citywide"),
-                value="outlook"),
-            "detail": ui.nav_panel(
-                V.TAB_TITLES["detail"],
-                preview_banner(B),
-                ui.div(
-                    ui.input_select("area", "Neighborhood",
-                                    {a: short(B, a) for a in B.areas}, selected=area),
-                    ui.input_checkbox_group(
-                        "models", "Models", {m: D.MODEL_SHORT.get(m, m) for m in B.models},
-                        selected=[D.PRIMARY] + (["persistence"] if m == "analyst" else []),
-                        inline=True),
-                    class_="controls"),
-                ui.output_ui("detail_body"),
-                ui.div(
-                    ui.h3("Is this season early, or big?"),
-                    ui.input_radio_buttons("ribbon_set", None, RIBBON_SETS, selected=ribbon_set,
-                                           inline=True)
-                    if B.season_roles() else None,
-                    ui.output_ui("detail_ribbons"),
-                    class_="chart-card"),
-                value="detail"),
-            "drivers": ui.nav_panel(
-                V.TAB_TITLES["drivers"],
-                preview_banner(B),
-                ui.h2("What's driving the forecast"),
-                ui.p("The graph model reads each neighborhood's recent weeks, its weather, the "
-                     "time of year and its neighbors' recent weeks. This page splits each "
-                     "forecast into those pieces, so you can see whether a rise is local "
-                     "momentum, spillover from next door, or just the season.", class_="blurb"),
-                ui.div(
-                    ui.input_select("drv_area", "Neighborhood",
-                                    {a: short(B, a) for a in B.areas}, selected=area),
-                    ui.input_slider("drv_h", "Weeks ahead", min(B.horizons), hmax_b,
-                                    min(B.horizons), step=1, ticks=True,
-                                    animate=ui.AnimationOptions(interval=1600, loop=False)),
-                    class_="controls"),
-                ui.p("Press play to watch the picture change as the forecast looks further "
-                     "ahead: this week's reading matters most next week, while the season and "
-                     "the neighbors matter more by week four.", class_="note"),
-                ui.output_ui("drv_body"),
-                value="drivers") if B.has_drivers else None,
-            "severity": ui.nav_panel(V.TAB_TITLES["severity"], severity_panel(B, m, area),
-                                     value="severity"),
-            "all": ui.nav_panel(
-                V.TAB_TITLES["all"],
-                preview_banner(B),
-                ui.h2("Every neighborhood at once"),
-                ui.p("The graph model's selling point is that neighboring areas move "
-                     "together, so it helps to see them side by side. Each card shows the "
-                     "last 12 reported weeks (black) and the next four (blue, with the "
-                     "plausible range). Click a card for its detail.", class_="blurb"),
-                ui.div(ui.input_select("sort", "Sort by",
-                                       {"rise": "Fastest rising", "now": "Highest now",
-                                        "name": "A–Z"}, selected="rise"),
-                       ui.input_switch("shared", "Same scale for every card", True),
-                       class_="controls"),
-                ui.output_ui("multiples"),
-                value="all"),
-            "record": ui.nav_panel(V.TAB_TITLES["record"], ui.output_ui("record"), value="record"),
-            "chicago": ui.nav_panel(V.TAB_TITLES["chicago"], chicago_panel(), value="chicago"),
-            "table": ui.nav_panel(
-                V.TAB_TITLES["table"],
-                ui.div(ui.input_select("tbl_city", "City", {k: c.label for k, c in D.CITIES.items()}),
-                       ui.input_select("tbl_model", "Model",
-                                       {m: D.MODEL_SHORT.get(m, m) for m in B.models}),
-                       class_="controls"),
-                ui.output_data_frame("table"),
-                value="table"),
-            "how": ui.nav_panel(V.TAB_TITLES["how"], how_panel(), value="how"),
-        }
-        wanted = [t for t in V.TABS[m] if (t != "chicago" or CHI is not None)
-                  and panels[t] is not None]
-        return ui.navset_card_tab(*[panels[t] for t in wanted], id="nav", selected=wanted[0])
+        return build_tabs(m, area, ribbon_set)
 
     # --- map clicks: every clickable area lands on the detail view ---------------
     @reactive.effect
@@ -732,10 +877,7 @@ def server(input, output, session):
 
     @render.ui
     def boston_citywide():
-        models = [D.PRIMARY] + (["persistence"] if mode() == "analyst" else [])
-        return fan_block(B, None, models, "Citywide",
-                         f"Average across the {len(B.areas)} neighborhoods, "
-                         f"{B.info['unit']}. Hover for weekly values.")
+        return citywide_block(mode())
 
     # --- detail -------------------------------------------------------------------
     @render.ui
@@ -744,42 +886,7 @@ def server(input, output, session):
         if area not in B.areas:
             area = B.areas[0]
         models = [m for m in (input.models() or [D.PRIMARY]) if m in B.models] or [D.PRIMARY]
-        # Bands go to the graph model when it is shown, so they mean the same thing
-        # everywhere; "same as last week" goes last, since it has no range.
-        models = sorted(models, key=lambda m: (m == "persistence", m != D.PRIMARY))
-        rows = B.rows(models[0], area)
-        now = B.latest()[area]
-        first, last = rows.iloc[0], rows.iloc[-1]
-        lvl_now = B.level(area, now)
-        reported = (
-            f"In <strong>{short(B, area)}</strong>, {B.fmt(now)} {B.info['unit_short']} were "
-            f"reported for the week of {week_span(B.origin)} ({(lvl_now or 'unrated').lower()} "
-            f"for this neighborhood). ")
-        if models[0] == "persistence":
-            sentence = reported + (
-                "“Same as last week” carries that number forward unchanged to every week "
-                "ahead. It is not a forecast: it is the yardstick the models are scored "
-                "against, so it has no range. Tick a model to see a forecast.")
-        else:
-            sentence = reported + (
-                f"The {D.MODEL_SHORT.get(models[0], models[0]).lower()} expects "
-                f"<strong>{B.fmt(first['predicted'])}</strong> next week, and would be "
-                f"surprised by anything outside {B.fmt(first['lower'])}–{B.fmt(first['upper'])}. "
-                f"For the week of {week_span(last['target_date'])}: {B.fmt(last['predicted'])} "
-                f"({B.fmt(last['lower'])}–{B.fmt(last['upper'])}).")
-        badges = ui.div(*[ui.span(ui.tags.b(D.MODEL_SHORT.get(m, m) + ": "),
-                                  trust_badge(B.trust(m, 1)), " ")
-                          for m in models if m != "persistence"],
-                        class_="legend")
-        teaser = driver_teaser(B, area)
-        return ui.div(
-            ui.p(ui.HTML(sentence), class_="callout"),
-            ui.p(teaser, " ", ui.input_action_link("to_drivers", "See what's driving it →"),
-                 class_="teaser") if teaser else None,
-            ui.div(ui.span("Past-season check, 1 week ahead:", class_="note"), badges),
-            fan_block(B, area, models, f"{short(B, area)}: the next four weeks",
-                      f"{B.info['unit'].capitalize()}. The vertical line is the latest "
-                      "reported week; hover anywhere for that week's numbers."))
+        return detail_html(area, models)
 
     @render.ui
     def detail_ribbons():
@@ -795,47 +902,13 @@ def server(input, output, session):
             area = input.drv_area() or sel_area()
             if area not in B.areas:
                 area = B.areas[0]
-            h = int(input.drv_h() or min(B.horizons))
-            analyst = mode() == "analyst"
-            wf = B.waterfall(area, h)
-            return ui.div(
-                ui.p(ui.HTML(driver_sentence(B, area, h, wf)), class_="callout"),
-                ui.div(waterfall_block(B, area, h, analyst), spill_block(B, area, h, "drv_click"),
-                       class_="grid-2"),
-                matrix_block(B, area, h, "drv_click"),
-                timeline_block(B, area, h),
-                method_block(B, area, h, analyst))
+            return drivers_body(area, int(input.drv_h() or min(B.horizons)),
+                                mode() == "analyst")
 
     # --- small multiples -----------------------------------------------------------
     @render.ui
     def multiples():
-        latest = B.latest()
-        hmax = max(B.horizons)
-        ahead = B.at(D.PRIMARY, hmax)
-        growth = (ahead / latest.replace(0, np.nan)) - 1
-        order = {"rise": growth.sort_values(ascending=False).index,
-                 "now": latest.sort_values(ascending=False).index,
-                 "name": sorted(B.areas, key=lambda a: short(B, a))}[input.sort() or "rise"]
-        shared_top = max(B.history.iloc[-12:].max().max(),
-                         B.forecast.loc[B.forecast["model"] == D.PRIMARY, "upper"].max())
-        cards = []
-        for area in order:
-            f = B.rows(D.PRIMARY, area)
-            top = shared_top if input.shared() else max(B.history[area].iloc[-12:].max(), f["upper"].max())
-            g = growth.get(area, np.nan)
-            arrow, _ = direction(g)
-            cards.append(ui.div(
-                ui.div(ui.span(short(B, area), class_="mini-name"),
-                       ui.span(f"{B.fmt(latest[area])} → {B.fmt(ahead[area])}", class_="mini-val"),
-                       class_="mini-head"),
-                ui.HTML(C.spark(B.history[area], f, ymax=top * 1.05)),
-                ui.div(ui.span(level_pill(B.level(area, latest[area]))),
-                       ui.span(f"{arrow} {g * 100:+.0f}% in {hmax} wk" if np.isfinite(g) else ""),
-                       class_="mini-foot"),
-                class_="mini", **{"data-area": area, "data-input": "area_click", "tabindex": "0",
-                                  "data-tip": f"{short(B, area)}\nNow {B.fmt(latest[area])}, "
-                                              f"in {hmax} weeks {B.fmt(ahead[area])}"}))
-        return ui.div(*cards, class_="multiples")
+        return multiples_html(input.sort() or "rise", bool(input.shared()))
 
     # --- severity, by neighborhood -------------------------------------------------------
     def sev_pick() -> str:
@@ -869,36 +942,27 @@ def server(input, output, session):
 
         @render.ui
         def chi_zip():
-            z = input.chi_area() or CHI.areas[0]
-            return fan_block(CHI, z, [D.PRIMARY], f"{short(CHI, z)}: the next weeks",
-                             "Activity level, 1 to 10. Values are capped at 10, so a very "
-                             "high peak and a merely high one can look the same.")
+            return chicago_zip(input.chi_area() or CHI.areas[0])
 
     # --- forecast table + downloads ---------------------------------------------------
     @render.data_frame
     def table():
         city = D.CITIES[input.tbl_city() or "boston"]
-        model = input.tbl_model() or D.PRIMARY
-        f = city.rows(model)
-        out = pd.DataFrame({
-            city.info["area_word"]: [short(city, a) for a in f["area"]],
-            "weeks ahead": f["horizon"], "week of": f["target_date"].dt.strftime("%Y-%m-%d"),
-            "median": f["predicted"].round(2), "95% low": f["lower"].round(2),
-            "95% high": f["upper"].round(2), "past-season check": f["trust"]})
-        return render.DataGrid(out, height="520px", filters=True)
+        return render.DataGrid(table_frame(city, input.tbl_model() or D.PRIMARY),
+                               height="520px", filters=True)
 
-    @render.download(filename=lambda: f"boston_flu_forecast_{B.meta['origin']}.csv")
+    @render.download(filename=lambda: download_name("csv"))
     def dl_csv():
         yield B.forecast.to_csv(index=False)
 
-    @render.download(filename=lambda: f"boston_flu_forecast_{B.meta['origin']}_flusight.csv")
+    @render.download(filename=lambda: download_name("flusight"))
     def dl_flusight():
         yield D.flusight(B).to_csv(index=False)
 
 
 # --- panels built once (static content) ---------------------------------------------------
 
-def chicago_panel():
+def chicago_panel(out=ui.output_ui, slider=live_slider):
     if CHI is None:
         return ui.p("Chicago data is not published yet.", class_="empty")
     hmax = max(CHI.horizons)
@@ -929,16 +993,15 @@ def chicago_panel():
                ui.HTML(C.two_city(series)), class_="chart-card"),
         ui.div(
             ui.div(ui.h3("ZIP codes"),
-                   ui.input_slider("chi_h", "Weeks ahead", 0, hmax, 0, step=1, ticks=True,
-                                   animate=ui.AnimationOptions(interval=1400, loop=False)),
-                   ui.output_ui("chi_map"), class_="card"),
-            ui.div(ui.h3("Highest"), ui.output_ui("chi_ranked"), class_="card"),
+                   slider("chi_h", "Weeks ahead", 0, hmax, 0, 1400),
+                   out("chi_map"), class_="card"),
+            ui.div(ui.h3("Highest"), out("chi_ranked"), class_="card"),
             class_="grid-2"),
         fan_block(CHI, None, [D.PRIMARY], "Chicago citywide",
                   f"Average activity level across {len(CHI.areas)} ZIP codes."),
         ui.div(ui.input_select("chi_area", "ZIP code", {a: a for a in sorted(CHI.areas)}),
                class_="controls"),
-        ui.output_ui("chi_zip"),
+        out("chi_zip"),
         ui.p(f"Source: {CHI.info['source']}.", class_="note"),
         ui.p(CHI.info["disclaimer"], class_="note"),
     )
@@ -1191,6 +1254,12 @@ def skipped_notes(table: pd.DataFrame) -> dict[str, str]:
 def severity_overview(city: D.CityData, selected: str, line: str = "IT50",
                       horizon: int | None = None):
     """Every area this season against its own lines, then every area and season."""
+    return ui.div(severity_table(city, selected, line, horizon),
+                  severity_grid_block(city, selected))
+
+
+def severity_table(city: D.CityData, selected: str | None, line: str = "IT50",
+                   horizon: int | None = None):
     horizon = horizon if horizon in city.horizons else max(city.horizons)
     name = dict(C.SEV_LINES)[line].lower()
     target = week_span(city.rows(D.PRIMARY).query("horizon == @horizon")["target_date"].max())
@@ -1217,14 +1286,6 @@ def severity_overview(city: D.CityData, selected: str, line: str = "IT50",
             ui.tags.td(C.chance(p)),
             class_="selected" if a == selected else None,
             **{"data-area": a, "data-input": "sev_click", "tabindex": "0"}))
-    tables = {a: city.season_severity(a) for a in sorted(city.areas, key=lambda a: short(city, a))}
-    # Which past season rated high or worse in the most areas, against their own lines.
-    worst = (pd.concat([t.assign(area=a) for a, t in tables.items()])
-             .query("role == 'used'").assign(bad=lambda d: d["cls"].isin(["High", "Very high"]))
-             .groupby("season")["bad"].sum().sort_values(ascending=False))
-    grid = C.severity_grid(tables, names={a: short(city, a) for a in city.areas}, fmt=city.fmt,
-                           unit=city.info["unit_short"], input_id="sev_click", selected=selected)
-    words = city.info["areas_word"]
     return ui.div(
         ui.div(ui.tags.table(
             ui.tags.thead(ui.tags.tr(*[ui.tags.th(t) for t in (
@@ -1238,7 +1299,21 @@ def severity_overview(city: D.CityData, selected: str, line: str = "IT50",
              class_="note"),
         ui.p(f"This week's level is the pill on the other tabs: the latest week against the "
              "same lines. The season so far is its highest week against them, so it is never "
-             "below this week's level.", class_="note"),
+             "below this week's level.", class_="note"))
+
+
+def severity_grid_block(city: D.CityData, selected: str | None):
+    """Every area and season against its own lines; the same whatever line or week
+    the table above is set to."""
+    tables = {a: city.season_severity(a) for a in sorted(city.areas, key=lambda a: short(city, a))}
+    # Which past season rated high or worse in the most areas, against their own lines.
+    worst = (pd.concat([t.assign(area=a) for a, t in tables.items()])
+             .query("role == 'used'").assign(bad=lambda d: d["cls"].isin(["High", "Very high"]))
+             .groupby("season")["bad"].sum().sort_values(ascending=False))
+    grid = C.severity_grid(tables, names={a: short(city, a) for a in city.areas}, fmt=city.fmt,
+                           unit=city.info["unit_short"], input_id="sev_click", selected=selected)
+    words = city.info["areas_word"]
+    return ui.div(
         ui.h4("Every season, every " + city.info["area_word"]),
         ui.p(f"Each cell is one season against that {city.info['area_word']}'s own lines "
              "(L low, M moderate, H high, VH very high); the last column is this season so far. "
@@ -1288,7 +1363,7 @@ def severity_area_block(city: D.CityData, area: str):
             ui.HTML(strip), class_="chart-card"))
 
 
-def severity_panel(city: D.CityData, m: str, area: str | None = None):
+def severity_panel(city: D.CityData, m: str, area: str | None = None, out=ui.output_ui):
     th = city.severity_thresholds()
     its = th["its"]
     table = city.season_severity()
@@ -1393,13 +1468,13 @@ def severity_panel(city: D.CityData, m: str, area: str | None = None):
                                     for h, d in zip(fc.index, fc["target_date"])},
                                    selected=str(hmax)),
                    class_="controls"),
-            ui.output_ui("sev_overview"), class_="chart-card"),
+            out("sev_overview"), class_="chart-card"),
         ui.div(
             ui.div(ui.input_select("sev_area", city.info["area_word"].capitalize(),
                                    {a: short(city, a) for a in city.areas},
                                    selected=area if area in city.areas else city.areas[0]),
                    class_="controls"),
-            ui.output_ui("sev_detail")),
+            out("sev_detail")),
         analogs_block(city, analogs, now.season, table) if analogs else None,
         ui.div(
             ui.h3("How to read this"),
@@ -1439,7 +1514,7 @@ def runtime_block(city: D.CityData):
         return None
     if "loaded" not in rt:
         rt = rt.assign(loaded=False)
-    rt = rt.assign(loaded=rt["loaded"].fillna(False).astype(bool))
+    rt = rt.assign(loaded=rt["loaded"].eq(True))  # blank (older archives) = trained
     per_run = rt.groupby(["origin", "model"]).agg(seconds=("seconds", "sum"),
                                                   loaded=("loaded", "all")).reset_index()
     latest = per_run["origin"].max()
@@ -1478,7 +1553,15 @@ def runtime_block(city: D.CityData):
         class_="chart-card")
 
 
-def how_panel():
+def n_members() -> str:
+    """How many models the Average combines, in words (four on the site; the BPHC
+    folder's weekly run has three)."""
+    members = (B.meta.get("ensemble") or {}).get("members") or [
+        m for m in B.models if m not in ("avg", "persistence")]
+    return {2: "two", 3: "three", 4: "four", 5: "five"}.get(len(members), str(len(members)))
+
+
+def how_panel(download=ui.download_button):
     shorts = {a: short(B, a) for a in B.areas}
     return ui.div(
         ui.h2("How the forecast works"),
@@ -1516,7 +1599,7 @@ def how_panel():
                      if CHI else []),
                    ui.tags.li("Reporting delays and later revisions are not modeled: a forecast "
                               "uses the numbers as published on the day it is made."),
-                   ui.tags.li("“Average” is the four models' forecasts averaged point by point "
+                   ui.tags.li(f"“Average” is the {n_members()} models' forecasts averaged point by point "
                               "along each range (every quantile), the way CDC's forecasting hubs "
                               "combine teams. It is not trained on its own, and the Track record "
                               "tab scores it like the others."),
@@ -1533,8 +1616,8 @@ def how_panel():
                ui.p("The current forecast for every neighborhood, model and week, with 23 "
                     "quantiles. The FluSight file follows the CDC forecast-hub layout.",
                     class_="blurb"),
-               ui.div(ui.download_button("dl_csv", "Forecast (CSV)"),
-                      ui.download_button("dl_flusight", "FluSight format (CSV)"),
+               ui.div(download("dl_csv", "Forecast (CSV)"),
+                      download("dl_flusight", "FluSight format (CSV)"),
                       class_="controls"),
                class_="card"),
     )

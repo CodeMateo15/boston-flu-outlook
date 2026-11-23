@@ -7,13 +7,16 @@ every visitor, so the first page view should not pay for reading them.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+# OUTLOOK_DATA_DIR points the app (or export_html.py) at another published data
+# folder, laid out like data/: one subfolder per city.
+DATA_DIR = Path(os.environ.get("OUTLOOK_DATA_DIR") or Path(__file__).resolve().parents[1] / "data")
 QUANTILES = [f"q{q:.3f}" for q in (0.01, 0.025, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45,
                                    0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95,
                                    0.975, 0.99)]

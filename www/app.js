@@ -1,8 +1,9 @@
 // Shared hover and click layer for the inline-SVG charts.
 //  - any element with data-tip shows the tooltip; the first line is the heading
-//  - any element with data-area sends that area to Shiny (data-input names the
-//    input, default "area_click"), so a map shape, a ranked row and a small
-//    multiple all open the same neighborhood view
+//  - any element with data-area sends that area to Shiny, or to the offline
+//    copy's page script (data-input names the input, default "area_click"),
+//    so a map shape, a ranked row and a small multiple all open the same
+//    neighborhood view
 (function () {
   var tip = null;
   function el() {
@@ -51,10 +52,15 @@
   });
   document.addEventListener("scroll", hide, true);
 
+  // In the offline copy (export_html.py) there is no Shiny; its page script
+  // handles the same click instead.
   function pick(t) {
-    if (!window.Shiny || !Shiny.setInputValue) return;
-    Shiny.setInputValue(t.getAttribute("data-input") || "area_click",
-                        t.getAttribute("data-area"), { priority: "event" });
+    var name = t.getAttribute("data-input") || "area_click", area = t.getAttribute("data-area");
+    if (window.Shiny && Shiny.setInputValue) {
+      Shiny.setInputValue(name, area, { priority: "event" });
+    } else if (window.OutlookStatic) {
+      window.OutlookStatic.pick(name, area);
+    }
   }
   document.addEventListener("click", function (e) {
     var t = e.target.closest && e.target.closest("[data-area]");
